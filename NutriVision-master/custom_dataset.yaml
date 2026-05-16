@@ -1,0 +1,24 @@
+train: C:/Users/M Thulasiram/.cache/kagglehub/datasets/josephvettom/food-image-dataset/versions/2/dataset/dataset/images/train
+val: C:/Users/M Thulasiram/.cache/kagglehub/datasets/josephvettom/food-image-dataset/versions/2/dataset/dataset/images/valid
+nc: 20
+names:
+- Chicken_Curry
+- Plain_Omelette
+- Spinach_Paneer
+- Appam
+- Avial
+- Banana_Chips
+- Chapati_Roti
+- Chocolate_Cake
+- Fruit_Salad
+- Idli
+- Kulfi
+- Marble_Cake
+- Masala_Dosa
+- Masala_Vada
+- Mutton_Biryani
+- Pancake
+- Sambar
+- Uttapam
+- Lemonade
+- Rice_Puttu
