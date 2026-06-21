@@ -55,6 +55,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
 class HTTPSRedirectMiddleware(BaseHTTPMiddleware):
     """Redirect HTTP to HTTPS when X-Forwarded-Proto is http (behind nginx/reverse proxy)."""
     async def dispatch(self, request: Request, call_next):
+        if request.url.path in ("/health", "/metrics"):
+            return await call_next(request)
         forwarded_proto = request.headers.get("X-Forwarded-Proto", "")
         if forwarded_proto.lower() == "http":
             url = request.url.replace(scheme="https")
