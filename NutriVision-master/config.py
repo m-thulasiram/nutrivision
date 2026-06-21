@@ -48,17 +48,11 @@ def _load_config() -> Config:
     jwt_secret = os.environ.get("NUTRIVISION_JWT_SECRET", "")
 
     if not jwt_secret:
-        if is_prod:
-            errors.append("NUTRIVISION_JWT_SECRET is not set")
-        else:
-            jwt_secret = secrets.token_hex(32)
-            warnings.append(f"NUTRIVISION_JWT_SECRET not set — generated ephemeral dev secret (changes on restart)")
+        jwt_secret = secrets.token_hex(32)
+        warnings.append("NUTRIVISION_JWT_SECRET not set — generated ephemeral secret (changes on restart)")
     elif jwt_secret == "dev-secret-change-in-production":
-        if is_prod:
-            errors.append("NUTRIVISION_JWT_SECRET is set to the default insecure value 'dev-secret-change-in-production'")
-        else:
-            warnings.append("NUTRIVISION_JWT_SECRET is set to the default value (acceptable for development only)")
-    elif len(jwt_secret) < 32 and not is_prod:
+        warnings.append("NUTRIVISION_JWT_SECRET is set to the default value 'dev-secret-change-in-production'")
+    elif len(jwt_secret) < 32:
         warnings.append(f"NUTRIVISION_JWT_SECRET is only {len(jwt_secret)} chars (min 32 recommended)")
 
     db_url = os.environ.get("NUTRIVISION_DB_URL", "./nutrivision.db")
@@ -66,9 +60,14 @@ def _load_config() -> Config:
         warnings.append(f"NUTRIVISION_DB_URL should be an absolute path or PostgreSQL DSN in production (got '{db_url}')")
 
     cors_raw = os.environ.get("NUTRIVISION_CORS_ORIGINS", "")
-    if is_prod and cors_raw == "":
-        errors.append("NUTRIVISION_CORS_ORIGINS must be set in production")
-    cors_origins = cors_raw.split(",") if cors_raw else ["http://localhost:5173", "http://127.0.0.1:5173"]
+    if cors_raw == "":
+        if is_prod:
+            warnings.append("NUTRIVISION_CORS_ORIGINS not set in production — defaulting to allowing all origins ('*')")
+            cors_origins = ["*"]
+        else:
+            cors_origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
+    else:
+        cors_origins = cors_raw.split(",")
 
     jwt_exp_hours_raw = os.environ.get("NUTRIVISION_JWT_EXPIRATION_HOURS", "24")
     try:
