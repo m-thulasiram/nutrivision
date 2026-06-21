@@ -30,19 +30,19 @@ async def scanner_match(
     user_data = crud.get_user(db, current_user_id)
     preferred_state = "Tamil Nadu"
     diet_type = "vegetarian"
-    
+
     if user_data:
         preferred_state = user_data.get("preferred_state", "Tamil Nadu")
         diet_type = user_data.get("diet_type", "vegetarian")
-        
+
     # Get today's progress to check remaining protein
     progress_res = _build_daily_progress(db, current_user_id)
     progress = progress_res.get("progress", {})
     remaining_protein = progress.get("remaining", {}).get("protein_g", 0.0) if progress else 0.0
-    
+
     # Get current hour
     current_hour = datetime.now().hour
-    
+
     # Get matches from the database
     candidates = get_hybrid_candidates(
         detected_class=request.detected_class,
@@ -51,10 +51,10 @@ async def scanner_match(
         hour=current_hour,
         remaining_protein=remaining_protein
     )
-    
+
     # Map yolo class to super category name
     super_category = YOLO_TO_SUPER_CAT.get(request.detected_class.replace(" ", "_"), "Snack")
-    
+
     return {
         "success": True,
         "detected_class": request.detected_class,

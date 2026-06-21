@@ -1,29 +1,30 @@
 import os
-import json
 import asyncio
 from typing import AsyncGenerator
 import pandas as pd
 from pathlib import Path
+from functools import lru_cache
 
-# Load food database once at startup
 FOOD_DB_PATH = Path("expanded_food_database.csv")
-food_df = pd.read_csv(FOOD_DB_PATH)
-# Rename columns to maintain backwards compatibility with existing copilot code
-food_df = food_df.rename(columns={
-    "Food Name": "Food_items",
-    "Protein": "Proteins",
-    "Fat": "Fats",
-    "Carbs": "Carbohydrates"
-})
-
-# Load category mappings
 MAPPING_PATH = Path("category_mapping.csv")
-if MAPPING_PATH.exists():
-    mapping_df = pd.read_csv(MAPPING_PATH)
-    food_to_super_cat = dict(zip(mapping_df["Food Name"], mapping_df["Super Category"]))
-    food_df["Super Category"] = food_df["Food_items"].map(food_to_super_cat)
-else:
-    food_df["Super Category"] = "Snack"
+
+
+@lru_cache(maxsize=1)
+def _load_food_db():
+    food_df = pd.read_csv(FOOD_DB_PATH)
+    food_df = food_df.rename(columns={
+        "Food Name": "Food_items",
+        "Protein": "Proteins",
+        "Fat": "Fats",
+        "Carbs": "Carbohydrates"
+    })
+    if MAPPING_PATH.exists():
+        mapping_df = pd.read_csv(MAPPING_PATH)
+        food_to_super_cat = dict(zip(mapping_df["Food Name"], mapping_df["Super Category"]))
+        food_df["Super Category"] = food_df["Food_items"].map(food_to_super_cat)
+    else:
+        food_df["Super Category"] = "Snack"
+    return food_df
 
 def build_system_prompt(user_context: dict) -> str:
   return f"""You are NutriVision's AI nutrition assistant. You are an expert in Indian nutrition and regional cuisine.
@@ -85,17 +86,17 @@ RESPONSE FORMAT RULES:
   |||END_LOG|||
 """
 
-def search_food_db(query: str, 
+def search_food_db(query: str,
                    diet_type: str,
                    state: str,
                    limit: int = 3) -> list:
   """Search food DB for RAG context."""
-  df = food_df.copy()
-  
+  df = _load_food_db().copy()
+
   # Normalize diet_type
   dt = diet_type.lower() if diet_type else "any"
   df["VegNovVeg_num"] = pd.to_numeric(df["VegNovVeg"], errors="coerce")
-  
+
   # Filter by diet type
   if dt in ("vegetarian", "veg"):
     df = df[df["VegNovVeg_num"] == 0]
@@ -103,7 +104,7 @@ def search_food_db(query: str,
     is_veg = df["VegNovVeg_num"] == 0
     is_egg = df["Food_items"].str.lower().str.contains("egg", na=False)
     df = df[is_veg | is_egg]
-  
+
   # Check if query matches any super-category keywords
   query_lower = query.lower()
   category_query_map = {
@@ -125,13 +126,13 @@ def search_food_db(query: str,
       "drink": "Beverage",
       "rice": "Rice Dish"
   }
-  
+
   matched_cat = None
   for kw, cat in category_query_map.items():
       if kw in query_lower:
           matched_cat = cat
           break
-          
+
   if matched_cat:
       # Retrieve foods matching this category
       cat_mask = df["Super Category"] == matched_cat
@@ -139,7 +140,7 @@ def search_food_db(query: str,
   else:
       mask = df["Food_items"].str.lower().str.contains(query_lower, na=False)
       matches = df[mask]
-      
+
   if not matches.empty:
       # Rank matches: preferred state matches first
       if state:
@@ -153,7 +154,7 @@ def search_food_db(query: str,
       if state_df.empty:
           state_df = df
       results = state_df.nlargest(limit, "Proteins")
-  
+
   return results[[
     "Food_items", "Calories", "Proteins",
     "Carbohydrates", "Fats", "VegNovVeg"
@@ -168,14 +169,14 @@ async def stream_copilot_response(
   Stream AI response word by word.
   Yields chunks of text.
   """
-  
+
   # RAG: search food DB for relevant foods
   relevant_foods = search_food_db(
     message,
     user_context.get("diet_type", "vegetarian"),
     user_context.get("preferred_state", "Tamil Nadu")
   )
-  
+
   # Inject RAG context into user message
   rag_context = ""
   if relevant_foods:
@@ -188,9 +189,9 @@ async def stream_copilot_response(
         f"{food['Carbohydrates']}g carbs, "
         f"{food['Fats']}g fat\n"
       )
-  
+
   enhanced_message = message + rag_context
-  
+
   # Build messages for API
   messages = [
     {
@@ -198,25 +199,25 @@ async def stream_copilot_response(
       "content": build_system_prompt(user_context)
     }
   ]
-  
+
   # Add conversation history
   for turn in conversation_history[-10:]:
     messages.append({
       "role": turn["role"],
       "content": turn["content"]
     })
-  
+
   # Add current message
   messages.append({
     "role": "user",
     "content": enhanced_message
   })
-  
+
   api_key = os.getenv("OPENAI_API_KEY")
   if not api_key or api_key == "your_key_here":
       # Dynamic mock fallback logic for offline/api key-less development
       msg_lower = message.lower()
-      
+
       # 1. Ask for food recommendation: e.g. "What should I eat for lunch?", "recommend", "dinner", "eat"
       if any(keyword in msg_lower for keyword in ["eat", "lunch", "dinner", "recommend", "suggest", "food"]):
           if relevant_foods:
@@ -232,7 +233,7 @@ async def stream_copilot_response(
               protein = 5
               carbs = 30
               fats = 2
-          
+
           state = user_context.get("preferred_state", "Tamil Nadu")
           reason = f"Low calorie, fits your {user_context.get('diet_type', 'vegetarian')} diet and region ({state}) perfectly."
           response = (
@@ -244,7 +245,7 @@ async def stream_copilot_response(
               f'"serving":"1 serving","reason":"{reason}"}}\n'
               f"|||END_CARD|||"
           )
-      
+
       # 2. Log a meal by talking: e.g. "I had 2 idlis", "I ate X", "ate", "had"
       elif any(keyword in msg_lower for keyword in ["ate", "had", "eat", "logged"]):
           import re
@@ -255,7 +256,7 @@ async def stream_copilot_response(
                   qty = int(match.group(1))
               except ValueError:
                   qty = 1
-          
+
           food_name = "Idli"
           if "sambar" in msg_lower:
               food_name = "Sambar"
@@ -265,7 +266,7 @@ async def stream_copilot_response(
               food_name = "Dosa"
           elif relevant_foods:
               food_name = relevant_foods[0]["Food_items"]
-          
+
           match_db = None
           for f in relevant_foods:
               if f["Food_items"].lower() in msg_lower:
@@ -273,7 +274,7 @@ async def stream_copilot_response(
                   break
           if not match_db and relevant_foods:
               match_db = relevant_foods[0]
-              
+
           if match_db:
               food_name = match_db["Food_items"]
               calories = int(match_db["Calories"]) * qty
@@ -294,21 +295,21 @@ async def stream_copilot_response(
               f'"calories":{calories},"protein_g":{protein},"carbs_g":{carbs},"fats_g":{fats}}}\n'
               f"|||END_LOG|||"
           )
-      
+
       # 3. Check status: e.g. "Am I on track?", "status", "track", "progress"
       elif any(keyword in msg_lower for keyword in ["track", "status", "progress", "on track"]):
           consumed_cals = user_context.get("consumed_calories", 0)
           target_cals = user_context.get("target_calories", 2000)
           consumed_protein = user_context.get("consumed_protein", 0)
           target_protein = user_context.get("target_protein", 120)
-          
+
           response = (
               f"You've consumed {consumed_cals} out of your {target_cals} kcal goal today. "
               f"Your protein is at {consumed_protein}g / {target_protein}g. "
               f"You have {max(0, target_cals - consumed_cals)} kcal and {max(0, target_protein - consumed_protein)}g protein remaining. "
               f"Try adding a high-protein option like dal or paneer to hit your goals!"
           )
-          
+
       # 4. Diabetic check: e.g. "jalebi", "sugar", "diabetic", "diabetes"
       elif any(keyword in msg_lower for keyword in ["jalebi", "sugar", "diabetic", "diabetes"]):
           response = (
@@ -316,7 +317,7 @@ async def stream_copilot_response(
               "As a diabetic user, this will cause a sharp spike in blood glucose levels. "
               "I recommend avoiding it or opting for a sugar-free alternative in small quantities."
           )
-          
+
       # 5. Default chat
       else:
           response = (
@@ -324,16 +325,16 @@ async def stream_copilot_response(
               f"I know your goal is to {user_context.get('goal', 'maintain')} and you prefer a {user_context.get('diet_type', 'vegetarian')} diet. "
               f"How can I help you today? You can ask me to recommend foods, log a meal, or check your remaining budget!"
           )
-          
+
       for word in response.split(" "):
           yield word + " "
           await asyncio.sleep(0.02)
       return
-  
+
   # OpenAI stream call
   from openai import AsyncOpenAI
   client = AsyncOpenAI(api_key=api_key)
-  
+
   stream = await client.chat.completions.create(
     model="gpt-4o-mini",
     messages=messages,
@@ -341,7 +342,7 @@ async def stream_copilot_response(
     temperature=0.7,
     stream=True,
   )
-  
+
   async for chunk in stream:
     delta = chunk.choices[0].delta.content
     if delta:

@@ -43,6 +43,7 @@ def get_weekly_progress(db: sqlite3.Connection = Depends(get_db), current_user_i
 def log_meal(meal: LogMealRequest, db: sqlite3.Connection = Depends(get_db), current_user_id: int = Depends(require_user_id)):
     crud.create_meal_log(db, {
         "user_id": current_user_id,
+        "meal_time": meal.meal_time,
         "detected_items": meal.detected_items,
         "total_calories": meal.total_calories,
         "total_protein": meal.total_protein,

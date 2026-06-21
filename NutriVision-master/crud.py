@@ -68,7 +68,7 @@ def delete_user(conn, user_id: int):
     conn.commit()
 
 def create_meal_log(conn, meal_data: dict):
-    safe = {k: v for k, v in meal_data.items() if k in {"user_id", "detected_items", "total_calories", "total_protein", "total_carbs", "total_fats"}}
+    safe = {k: v for k, v in meal_data.items() if k in {"user_id", "meal_time", "detected_items", "total_calories", "total_protein", "total_carbs", "total_fats"}}
     if not safe:
         raise ValueError("No valid meal log fields provided")
     cursor = conn.cursor()

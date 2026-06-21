@@ -14,11 +14,7 @@ build/
 .cache/
 nutrivision-ui/
 _deprecated/
-runs/
 tests/
-*.jpg
-*.png
-*.jpeg
 *.md
 custom_dataset.yaml
 train_model.py

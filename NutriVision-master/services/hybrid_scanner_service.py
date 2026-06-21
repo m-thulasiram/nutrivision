@@ -1,19 +1,19 @@
 import pandas as pd
 from pathlib import Path
+from functools import lru_cache
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DB_PATH = BASE_DIR / "expanded_food_database.csv"
 MAPPING_PATH = BASE_DIR / "category_mapping.csv"
 
-# Load database and category mapping
-db_df = pd.read_csv(DB_PATH)
-mapping_df = pd.read_csv(MAPPING_PATH)
 
-# Build a lookup mapping: Food Name -> Super Category
-food_to_super_cat = dict(zip(mapping_df["Food Name"], mapping_df["Super Category"]))
-
-# Inject Super Category into db_df
-db_df["Super Category"] = db_df["Food Name"].map(food_to_super_cat)
+@lru_cache(maxsize=1)
+def _load_db():
+    db_df = pd.read_csv(DB_PATH)
+    mapping_df = pd.read_csv(MAPPING_PATH)
+    food_to_super_cat = dict(zip(mapping_df["Food Name"], mapping_df["Super Category"]))
+    db_df["Super Category"] = db_df["Food Name"].map(food_to_super_cat)
+    return db_df
 
 YOLO_TO_SUPER_CAT = {
     "Chicken_Curry": "Chicken Dish",
@@ -59,12 +59,13 @@ def get_hybrid_candidates(detected_class: str,
                 break
         if not super_cat:
             super_cat = "Snack"  # fallback
-            
+
     # 2. Filter by Super Category
+    db_df = _load_db()
     df = db_df[db_df["Super Category"] == super_cat].copy()
     if df.empty:
         return []
-        
+
     # 3. Filter by Diet Type
     dt = diet_type.lower() if diet_type else "any"
     if dt in ("vegetarian", "veg"):
@@ -73,13 +74,13 @@ def get_hybrid_candidates(detected_class: str,
         is_veg = df["VegNovVeg"] == 0
         is_egg = df["Food Name"].str.lower().str.contains("egg|omelette", na=False)
         df = df[is_veg | is_egg]
-    
+
     if df.empty:
         return []
-        
+
     # 4. Score candidates
     scores = []
-    
+
     # Map hour to Meal Type
     if 6 <= hour < 11:
         current_meal = "Breakfast"
@@ -91,29 +92,29 @@ def get_hybrid_candidates(detected_class: str,
         current_meal = "Dinner"
     else:
         current_meal = "Snack"
-        
+
     for idx, row in df.iterrows():
         score = 0
-        
+
         # State priority
         if user_state and str(row["State"]).lower().strip() == user_state.lower().strip():
             score += 50
-            
+
         # Meal type priority
         if str(row["Meal Type"]).lower() == current_meal.lower():
             score += 25
-            
+
         # Nutrition priority (high protein remaining -> favor high protein foods)
         if remaining_protein > 20 and row["Protein"] > 8:
             score += 15
         elif remaining_protein > 5 and row["Protein"] > 4:
             score += 8
-            
+
         scores.append((score, row))
-        
+
     # Sort descending by score, then alphabetically by Food Name
     scores.sort(key=lambda x: (-x[0], x[1]["Food Name"]))
-    
+
     results = []
     for score, row in scores[:limit]:
         results.append({
@@ -131,5 +132,5 @@ def get_hybrid_candidates(detected_class: str,
             "calcium_mg": float(row["Calcium"]),
             "score": score
         })
-        
+
     return results
