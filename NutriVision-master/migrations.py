@@ -118,6 +118,7 @@ def run_migrations() -> list[str]:
     conn = get_connection()
     try:
         _ensure_migrations_table(conn)
+        conn.commit()
         applied = get_applied_versions(conn)
         ran: list[str] = []
 
@@ -130,8 +131,18 @@ def run_migrations() -> list[str]:
             )
             for stmt in migration["sql"]:
                 try:
+                    if IS_POSTGRES:
+                        conn.cursor().execute("SAVEPOINT migration_stmt")
                     conn.cursor().execute(stmt)
+                    if IS_POSTGRES:
+                        conn.cursor().execute("RELEASE SAVEPOINT migration_stmt")
                 except Exception as e:
+                    if IS_POSTGRES:
+                        try:
+                            conn.cursor().execute("ROLLBACK TO SAVEPOINT migration_stmt")
+                            conn.cursor().execute("RELEASE SAVEPOINT migration_stmt")
+                        except Exception:
+                            pass
                     msg = str(e).lower()
                     if "duplicate column" in msg:
                         continue
@@ -139,6 +150,8 @@ def run_migrations() -> list[str]:
                         continue
                     if "unique constraint" in msg and "index" in msg:
                         logger.warning("Unique index creation failed, skipping", extra={"error": str(e)})
+                        continue
+                    if "already exists" in msg:
                         continue
                     raise
             ph = "%s" if IS_POSTGRES else "?"
