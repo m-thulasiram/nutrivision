@@ -1,0 +1,107 @@
+Food_items,region,state,cuisine,meal_type
+aloo Tikki,North India,Uttar Pradesh,North Indian,Snack
+Kadhi,North India,Rajasthan,North Indian,Lunch
+Bananas,All India,All,General,Breakfast
+Bread made in wheat,North India,Punjab,North Indian,Breakfast
+Mango Chutney,West India,Maharashtra,West Indian,Condiment
+Baati,Central India,Rajasthan,Rajasthani,Lunch
+Brown Rice,South India,Kerala,South Indian,Lunch
+Cauliflower,All India,All,General,Vegetable
+cheese,All India,All,General,Dairy
+Coffee,South India,Tamil Nadu,South Indian,Breakfast
+Corn,All India,All,General,Snack
+Bhel Puri,West India,Maharashtra,West Indian,Snack
+Grapes,All India,All,General,Breakfast
+Milk,All India,All,General,Dairy
+Cashew Nuts,West India,Goa,West Indian,Snack
+Paneer Tikka,North India,Punjab,North Indian,Lunch
+Orange,All India,All,General,Breakfast
+Maggie,All India,All,General,Snack
+Pears,All India,All,General,Breakfast
+Aloo Matar,North India,Punjab,North Indian,Lunch
+Glucone'D,All India,All,General,Supplement
+Sitafal,West India,Maharashtra,West Indian,Snack
+Rohu Curry,East India,West Bengal,Eastern Indian,Lunch
+Surmai,West India,Maharashtra,West Indian,Dinner
+Veg Pizza,All India,All,Continental,Dinner
+Cheese Pizza,All India,All,Continental,Dinner
+Onion Pakoda,West India,Gujarat,Gujarati,Snack
+Butter Chicken,North India,Delhi,North Indian,Lunch
+Chicken Kolapuri,West India,Maharashtra,West Indian,Lunch
+Chicken 65,South India,Tamil Nadu,South Indian,Snack
+Gulab Jamun,North India,Uttar Pradesh,North Indian,Dessert
+Jalebi,North India,Uttar Pradesh,North Indian,Dessert
+Dairy Milk,All India,All,General,Dessert
+Fruit and Nut chocolate,All India,All,General,Dessert
+Dosa,South India,Tamil Nadu,South Indian,Breakfast
+Idli,South India,Tamil Nadu,South Indian,Breakfast
+Poha,West India,Madhya Pradesh,Central Indian,Breakfast
+Chappati,North India,Punjab,North Indian,Lunch
+Tomato,All India,All,General,Vegetable
+Dahi,All India,All,General,Dairy
+Cake,All India,All,Continental,Dessert
+Chowmein,All India,All,Indo-Chinese,Lunch
+Uttapam,South India,Tamil Nadu,South Indian,Breakfast
+Bhaji Pav,West India,Maharashtra,West Indian,Snack
+Dal Makhani,North India,Punjab,North Indian,Lunch
+Almonds,All India,All,General,Snack
+Mushrooms,All India,All,General,Vegetable
+Egg Yolk,All India,All,General,Breakfast
+Sweet Potatoes,All India,All,General,Snack
+Masala Aloo,North India,Punjab,North Indian,Lunch
+White Rice,South India,Tamil Nadu,South Indian,Lunch
+Orange juice,All India,All,General,Breakfast
+Sweet Dahi,All India,All,General,Dessert
+Cornflakes,All India,All,General,Breakfast
+Laal Chai,East India,West Bengal,Eastern Indian,Breakfast
+Pumpkin seeds,All India,All,General,Snack
+Butter Paneer,North India,Punjab,North Indian,Lunch
+Salmon,All India,All,General,Dinner
+Chocos,All India,All,General,Breakfast
+Beans,All India,All,General,Vegetable
+Dal Fry,North India,Punjab,North Indian,Lunch
+Red Sauce Pasta,All India,All,Continental,Lunch
+Chai,All India,All,General,Beverage
+Apples,All India,All,General,Breakfast
+Strawberries,All India,All,General,Breakfast
+Kiwi,All India,All,General,Breakfast
+Mutton,North India,Uttar Pradesh,North Indian,Lunch
+Boiled Chicken,All India,All,General,Lunch
+Chicken Tandoori,North India,Punjab,North Indian,Dinner
+Kebab,North India,Uttar Pradesh,North Indian,Snack
+Tomato Rice,South India,Tamil Nadu,South Indian,Lunch
+Prawns,West India,Goa,West Indian,Dinner
+Momos,North-East India,Sikkim,North-Eastern,Snack
+Mixed Veg,All India,All,General,Vegetable
+Chicken sausage,All India,All,Continental,Snack
+Malai Chicken,North India,Delhi,North Indian,Dinner
+Nachos,All India,All,Continental,Snack
+Chicken Popcorn,All India,All,Continental,Snack
+Nalli Nihari,North India,Delhi,North Indian,Lunch
+Fish Eggs,East India,West Bengal,Eastern Indian,Lunch
+King Fish,West India,Goa,West Indian,Dinner
+Banana Chips,South India,Kerala,South Indian,Snack
+Honey,All India,All,General,Condiment
+Chocolate Icecream,All India,All,General,Dessert
+Vanilla Ice cream,All India,All,General,Dessert
+Strawberry Icecream,All India,All,General,Dessert
+Rasmalai,East India,Odisha,Eastern Indian,Dessert
+Chocolate milk,All India,All,General,Beverage
+Kheer,All India,All,General,Dessert
+Chicken Curry,All India,All,General,Lunch
+Plain Omelette,All India,All,General,Breakfast
+Spinach Paneer,North India,Punjab,North Indian,Lunch
+Appam,South India,Kerala,South Indian,Breakfast
+Avial,South India,Kerala,South Indian,Lunch
+Chapati Roti,North India,Punjab,North Indian,Lunch
+Chocolate Cake,All India,All,Continental,Dessert
+Fruit Salad,All India,All,General,Dessert
+Kulfi,North India,Delhi,North Indian,Dessert
+Marble Cake,All India,All,Continental,Dessert
+Masala Dosa,South India,Karnataka,South Indian,Breakfast
+Masala Vada,South India,Tamil Nadu,South Indian,Snack
+Mutton Biryani,South India,Hyderabad,South Indian,Lunch
+Pancake,All India,All,Continental,Breakfast
+Sambar,South India,Tamil Nadu,South Indian,Lunch
+Lemonade,All India,All,General,Beverage
+Rice Puttu,South India,Kerala,South Indian,Breakfast

@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+env:
+  NUTRIVISION_ENV: ci
+  NUTRIVISION_JWT_SECRET: ci-test-secret-that-is-at-least-thirtytwo-chars-long
+  NUTRIVISION_DB_URL: ./nutrivision_ci.db
+  NUTRIVISION_CORS_ORIGINS: http://localhost:5173
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install ruff==0.9.1
+      - run: ruff check . --output-format=github
+
+  test-sqlite:
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: pytest tests/ --cov=. --cov-fail-under=60 --cov-report=term --cov-report=xml -v
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report-sqlite
+          path: coverage.xml
+
+  test-postgres:
+    runs-on: ubuntu-latest
+    needs: lint
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: nutrivision
+          POSTGRES_PASSWORD: nutrivision
+          POSTGRES_DB: nutrivision
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: pytest tests/ -v --tb=short
+        env:
+          DISABLE_RATE_LIMIT: "1"
+          NUTRIVISION_DB_URL: postgresql://nutrivision:nutrivision@localhost:5432/nutrivision
+          NUTRIVISION_ENV: ci
+          NUTRIVISION_JWT_SECRET: ci-test-secret-that-is-at-least-thirtytwo-chars-long
+          NUTRIVISION_CORS_ORIGINS: http://localhost:5173
+
+  docker-backend:
+    runs-on: ubuntu-latest
+    needs: test-sqlite
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f Dockerfile -t nutrivision-backend:ci .
+      - run: docker run --rm -d --name nutrivision-ci -p 8000:8000
+          -e NUTRIVISION_ENV=ci
+          -e NUTRIVISION_JWT_SECRET=ci-test-secret-that-is-at-least-thirtytwo-chars-long
+          -e NUTRIVISION_DB_URL=/data/nutrivision.db
+          -e NUTRIVISION_CORS_ORIGINS=http://localhost:5173
+          nutrivision-backend:ci
+          sleep 5
+      - run: docker ps && curl -sf http://localhost:8000/health | head -c 200
+      - run: docker stop nutrivision-ci
+
+  docker-frontend:
+    runs-on: ubuntu-latest
+    needs: test-sqlite
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f Dockerfile.frontend -t nutrivision-frontend:ci .
+      - run: docker run --rm -d --name nutrivision-fe-ci -p 80:80 nutrivision-frontend:ci
+      - run: sleep 3 && docker ps && curl -sf http://localhost:80/ | head -c 200
+      - run: docker stop nutrivision-fe-ci

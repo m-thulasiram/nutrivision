@@ -1,0 +1,58 @@
+{
+  "expo": {
+    "name": "NutriVision",
+    "slug": "nutrivision",
+    "version": "2.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.nutrivision.app"
+    },
+    "android": {
+      "package": "com.nutrivision.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#F8FAF9",
+        "foregroundImage": "./assets/android-icon-foreground.png"
+      },
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "apiUrl": "http://192.168.29.167:8000",
+      "eas": {
+        "projectId": "5ba1d34f-0a03-497a-9e23-2dce75a04e6a"
+      }
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "NutriVision uses your camera to scan food and check exercise form."
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#F8FAF9"
+        }
+      ]
+    ]
+  }
+}

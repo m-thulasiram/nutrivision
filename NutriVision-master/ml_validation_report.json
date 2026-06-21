@@ -1,0 +1,28 @@
+{
+  "consistency": {
+    "mean_jaccard_similarity": 1.0,
+    "runs_compared": 5
+  },
+  "diversity": {
+    "unique_items": 5,
+    "total_recommended": 5,
+    "calorie_range": 433.0,
+    "diversity_score": 1.0
+  },
+  "regional_accuracy": {
+    "South India": {
+      "total": 5,
+      "with_region_tag": 5
+    },
+    "North India": {
+      "total": 5,
+      "with_region_tag": 5
+    }
+  },
+  "guardrails": {
+    "calorie_budget_compliance": true,
+    "calorie_budget_tested": 300,
+    "veg_filter_results": 5,
+    "non_empty_veg_results": true
+  }
+}

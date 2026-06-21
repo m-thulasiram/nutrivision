@@ -1,0 +1,16 @@
+target-version = "py311"
+
+[lint]
+select = ["E4", "E7", "E9", "F", "W"]
+ignore = ["E402"]
+
+[lint.per-file-ignores]
+"tests/*" = ["F401"]
+"scripts/*" = ["F401"]
+"generate_audit.py" = ["F541", "F401"]
+"locustfile.py" = ["F541", "F401"]
+"benchmark_recommendation.py" = ["F841"]
+"nutrivision-ui/*" = ["W291", "W293"]
+"perfect_solver.py" = ["W291", "W293", "W292"]
+
+

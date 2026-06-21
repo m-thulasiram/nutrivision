@@ -1,5 +1,5 @@
-train: C:/Users/M Thulasiram/.cache/kagglehub/datasets/josephvettom/food-image-dataset/versions/2/dataset/dataset/images/train
-val: C:/Users/M Thulasiram/.cache/kagglehub/datasets/josephvettom/food-image-dataset/versions/2/dataset/dataset/images/valid
+train: C:/Users/Lenovo/.cache/kagglehub/datasets/josephvettom/food-image-dataset/versions/2/dataset/dataset/images/train
+val: C:/Users/Lenovo/.cache/kagglehub/datasets/josephvettom/food-image-dataset/versions/2/dataset/dataset/images/valid
 nc: 20
 names:
 - Chicken_Curry

@@ -1,0 +1,80 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nutrivision-backup
+  labels:
+    app: nutrivision
+    component: backup
+spec:
+  schedule: "0 3 * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
+  jobTemplate:
+    spec:
+      backoffLimit: 3
+      ttlSecondsAfterFinished: 604800
+      template:
+        spec:
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            runAsGroup: 1001
+            fsGroup: 1001
+          restartPolicy: OnFailure
+          containers:
+            - name: backup
+              image: python:3.11-slim
+              command:
+                - python
+                - /app/scripts/backup_db.py
+                - --db-path
+                - /data/nutrivision.db
+                - --backup-dir
+                - /backups
+              env:
+                - name: NUTRIVISION_DB_URL
+                  value: /data/nutrivision.db
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+                  readOnly: true
+                - name: backups
+                  mountPath: /backups
+                - name: scripts
+                  mountPath: /app/scripts
+                  readOnly: true
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  memory: "128Mi"
+                  cpu: "100m"
+                limits:
+                  memory: "256Mi"
+                  cpu: "500m"
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: nutrivision-data
+            - name: backups
+              persistentVolumeClaim:
+                claimName: nutrivision-backups
+            - name: scripts
+              configMap:
+                name: nutrivision-scripts
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nutrivision-backups
+  labels:
+    app: nutrivision
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi

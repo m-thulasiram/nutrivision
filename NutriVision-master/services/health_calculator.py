@@ -19,14 +19,14 @@ def calculate_tdee(bmr: float, activity_level: str) -> float:
 
 def calculate_targets(tdee: float, goal: str, weight_kg: float) -> dict:
     """Calculate ideal calorie and macro targets based on fitness goal."""
-    
+
     # Base calories
     target_calories = tdee
     if goal.lower() == "weight_loss":
         target_calories -= 500  # Default 500 deficit
     elif goal.lower() == "muscle_gain":
         target_calories += 500  # Default 500 surplus
-        
+
     # Macros Breakdown
     if goal.lower() == "weight_loss":
         # 40% Protein, 30% Carbs, 30% Fats

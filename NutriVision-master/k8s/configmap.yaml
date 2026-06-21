@@ -1,0 +1,54 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nutrivision-config
+  labels:
+    app: nutrivision
+data:
+  NUTRIVISION_ENV: "production"
+  NUTRIVISION_DB_URL: "/data/nutrivision.db"
+  NUTRIVISION_CORS_ORIGINS: "https://your-frontend.example.com"
+  NUTRIVISION_JWT_EXPIRATION_HOURS: "24"
+  NUTRIVISION_YOLO_CONFIDENCE: "0.60"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nutrivision-scripts
+  labels:
+    app: nutrivision
+data:
+  backup_db.py: |
+    """Automated SQLite database backup script."""
+    import argparse, os, sqlite3, shutil, sys
+    from datetime import datetime, timezone
+
+    def backup_database(db_path: str, backup_dir: str, max_backups: int = 30) -> str:
+        if not os.path.isfile(db_path):
+            print(f"ERROR: Database not found at {db_path}", file=sys.stderr)
+            sys.exit(1)
+        os.makedirs(backup_dir, exist_ok=True)
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        backup_name = f"nutrivision_backup_{timestamp}.db"
+        backup_path = os.path.join(backup_dir, backup_name)
+        conn = sqlite3.connect(db_path)
+        backup_conn = sqlite3.connect(backup_path)
+        conn.backup(backup_conn)
+        backup_conn.close()
+        conn.close()
+        backup_size = os.path.getsize(backup_path)
+        print(f"Backup created: {backup_path} ({backup_size} bytes)")
+        backups = sorted([f for f in os.listdir(backup_dir) if f.startswith("nutrivision_backup_")])
+        while len(backups) > max_backups:
+            old = os.path.join(backup_dir, backups.pop(0))
+            os.remove(old)
+            print(f"Removed old backup: {old}")
+        return backup_path
+
+    if __name__ == "__main__":
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--db-path", default=os.environ.get("NUTRIVISION_DB_URL", "/data/nutrivision.db"))
+        parser.add_argument("--backup-dir", default="/backups")
+        parser.add_argument("--max-backups", type=int, default=30)
+        args = parser.parse_args()
+        backup_database(args.db_path, args.backup_dir, args.max_backups)
