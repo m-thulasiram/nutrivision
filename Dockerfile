@@ -3,6 +3,11 @@ FROM python:3.11-slim AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libxcb1 \
+    libx11-6 \
+    libxext6 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -14,6 +19,11 @@ FROM python:3.11-slim AS runtime
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libxcb1 \
+    libx11-6 \
+    libxext6 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN addgroup --system --gid 1001 appgroup && \
