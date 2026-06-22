@@ -1,8 +1,21 @@
+# ---- Frontend build stage ----
+FROM node:20-slim AS frontend-builder
+WORKDIR /build
+COPY nutrivision-ui/package*.json ./
+RUN npm ci
+COPY nutrivision-ui/ ./
+RUN npm run build
+
 # ---- Build stage ----
 FROM python:3.11-slim AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    libgl1 \
+    libglib2.0-0 \
+    libxcb1 \
+    libx11-6 \
+    libxext6 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -14,6 +27,11 @@ FROM python:3.11-slim AS runtime
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    libgl1 \
+    libglib2.0-0 \
+    libxcb1 \
+    libx11-6 \
+    libxext6 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN addgroup --system --gid 1001 appgroup && \
@@ -26,6 +44,9 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 
 COPY . .
 
+# Copy built frontend assets
+COPY --from=frontend-builder /build/dist /app/nutrivision-ui/dist
+
 RUN chown -R appuser:appgroup /app && \
     mkdir -p /data && chown appuser:appgroup /data
 
@@ -37,3 +58,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD curl -sf http://localhost:8000/health || exit 1
 
 CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"]
+

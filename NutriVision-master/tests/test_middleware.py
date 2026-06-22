@@ -74,7 +74,7 @@ class TestSecurityHeadersMiddleware:
 
 class TestHTTPSRedirectMiddleware:
     def test_http_forwarded_proto_redirects(self, client):
-        resp = client.get("/health", headers={"X-Forwarded-Proto": "http"}, follow_redirects=False)
+        resp = client.get("/api/auth/login", headers={"X-Forwarded-Proto": "http"}, follow_redirects=False)
         assert resp.status_code == 301
         assert resp.headers["Location"].startswith("https://")
 
