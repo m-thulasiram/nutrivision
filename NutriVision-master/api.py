@@ -101,11 +101,13 @@ app.add_api_route("/metrics", metrics_handler, include_in_schema=False)
 @app.get("/health")
 def health():
     try:
-        from database import get_connection
+        from database import get_connection, close_connection
         conn = get_connection()
-        conn.execute("SELECT 1")
-        conn.close()
-        db_ok = True
+        try:
+            conn.execute("SELECT 1")
+            db_ok = True
+        finally:
+            close_connection(conn)
     except Exception:
         db_ok = False
     try:

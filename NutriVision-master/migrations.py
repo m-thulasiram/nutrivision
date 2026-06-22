@@ -164,7 +164,8 @@ def run_migrations() -> list[str]:
 
         return ran
     finally:
-        conn.close()
+        from database import close_connection
+        close_connection(conn)
 
 
 def placeholder() -> str:

@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel, Field
 import sqlite3
-from database import get_db, get_connection
+from database import get_db, get_connection, close_connection
 from dependencies import require_user_id
 from logging_config import get_logger
 
@@ -107,7 +107,7 @@ def _ensure_workout_tables():
         )
     """)
     conn.commit()
-    conn.close()
+    close_connection(conn)
 
 
 _ensure_workout_tables()
