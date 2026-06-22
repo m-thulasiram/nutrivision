@@ -135,58 +135,6 @@ def health():
     )
 
 
-@app.get("/api/diagnose")
-def diagnose():
-    import psutil
-    import os
-    import gc
-    from PIL import Image
-    import numpy as np
-    
-    process = psutil.Process(os.getpid())
-    info = {
-        "pid": os.getpid(),
-        "memory_rss_mb": round(process.memory_info().rss / 1024 / 1024, 2),
-        "memory_vms_mb": round(process.memory_info().vms / 1024 / 1024, 2),
-    }
-    
-    try:
-        from models import get_models
-        info["step_1_start_rss"] = round(process.memory_info().rss / 1024 / 1024, 2)
-        
-        m = get_models()
-        info["step_2_models_rss"] = round(process.memory_info().rss / 1024 / 1024, 2)
-        
-        if m.yolo_model is not None:
-            dummy_img = Image.fromarray(np.uint8(np.zeros((256, 256, 3))))
-            
-            # Predict
-            results = list(m.yolo_model.predict(
-                dummy_img,
-                imgsz=256,
-                conf=0.25,
-                stream=True,
-                verbose=False,
-                device='cpu',
-                half=False
-            ))
-            info["step_3_inference_success"] = True
-            info["step_3_inference_results"] = len(results)
-            
-            del results
-            gc.collect()
-            info["step_4_memory_after_infer_rss"] = round(process.memory_info().rss / 1024 / 1024, 2)
-        else:
-            info["step_3_inference_success"] = False
-            info["error"] = "YOLO model is None"
-            
-    except Exception as e:
-        info["step_3_inference_success"] = False
-        info["error"] = str(e)
-        
-    return info
-
-
 # Include route modules
 from routes.auth import router as auth_router
 from routes.users import router as users_router
