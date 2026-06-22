@@ -98,7 +98,12 @@ export default function ScanScreen({ navigation }: { navigation: any }) {
     if (!cameraRef.current) return;
     setError('');
     try {
-      const photo = await cameraRef.current.takePictureAsync({ base64: true, quality: 0.3 });
+      // quality: 0.15 keeps file tiny (~80-150KB) — prevents Render OOM on 512MB RAM
+      const photo = await cameraRef.current.takePictureAsync({
+        base64: true,
+        quality: 0.15,
+        skipProcessing: true,
+      });
       if (!photo?.uri) {
         setError('Failed to capture image.');
         return;
@@ -119,7 +124,7 @@ export default function ScanScreen({ navigation }: { navigation: any }) {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'],
-        quality: 0.3,
+        quality: 0.15,
         base64: true,
       });
       if (!result.canceled && result.assets[0]) {
@@ -141,35 +146,55 @@ export default function ScanScreen({ navigation }: { navigation: any }) {
     try {
       const token = await getToken();
 
+      // Guard: reject if base64 is too large (>2MB string = ~1.5MB image = safe for Render)
+      if (base64Data && base64Data.length > 2 * 1024 * 1024) {
+        throw new Error('Image too large. Please try again — camera will compress it automatically.');
+      }
+
+      // 30-second timeout to prevent hanging on Render cold start
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
+
       let response: Response;
 
-      if (base64Data) {
-        // Send as base64 JSON — reliable on all Android versions
-        response = await fetch(`${BASE_URL}/api/analyze-meal-b64`, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ image_base64: base64Data }),
-        });
-      } else {
-        // Fallback: multipart FormData
-        const formData = new FormData();
-        formData.append('image', { uri, type: 'image/jpeg', name: 'meal.jpg' } as any);
-        response = await fetch(`${BASE_URL}/api/analyze-meal`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}` },
-          body: formData,
-        });
+      try {
+        if (base64Data) {
+          // Send as base64 JSON — reliable on all Android versions
+          response = await fetch(`${BASE_URL}/api/analyze-meal-b64`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ image_base64: base64Data }),
+            signal: controller.signal,
+          });
+        } else {
+          // Fallback: multipart FormData
+          const formData = new FormData();
+          formData.append('image', { uri, type: 'image/jpeg', name: 'meal.jpg' } as any);
+          response = await fetch(`${BASE_URL}/api/analyze-meal`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` },
+            body: formData,
+            signal: controller.signal,
+          });
+        }
+      } finally {
+        clearTimeout(timeoutId);
       }
 
       const responseText = await response.text();
       let data: any;
       try {
         data = JSON.parse(responseText);
-      } catch (err) {
-        throw new Error(`HTTP ${response.status}: ${responseText.slice(0, 150) || 'Empty response'}`);
+      } catch {
+        // Backend crashed or returned empty body (OOM/timeout on Render)
+        throw new Error(
+          responseText.trim()
+            ? `Server error (${response.status}): ${responseText.slice(0, 120)}`
+            : `Server error (${response.status}): No response — server may be restarting. Please try again in 30 seconds.`
+        );
       }
       if (!response.ok) {
         throw new ApiRequestError(response.status, data.detail || 'Analysis failed');
