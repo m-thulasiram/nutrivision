@@ -103,7 +103,6 @@ export default function ScanScreen({ navigation }: { navigation: any }) {
       const photo = await cameraRef.current.takePictureAsync({
         base64: true,
         quality: 0.15,
-        skipProcessing: true,
       });
       if (!photo?.uri) {
         setError('Failed to capture image.');
