@@ -35,8 +35,15 @@ def process_pil_image(pil_image: Image.Image, user_id: int, db: sqlite3.Connecti
         raise HTTPException(status_code=500, detail="YOLO model is not loaded")
 
     try:
-        # Resize image in-place to max 640px to prevent PyTorch memory spikes (OOM) on Render
-        pil_image.thumbnail((640, 640))
+        # Resize image to max 320px to prevent YOLO OOM on Render 512MB free tier
+        # 320px is sufficient for food detection; 640px causes RAM spikes
+        pil_image.thumbnail((320, 320))
+
+        # Convert to RGB JPEG bytes and reload — strips alpha, reduces memory overhead
+        buf = io.BytesIO()
+        pil_image.save(buf, format='JPEG', quality=75)
+        buf.seek(0)
+        pil_image = Image.open(buf).convert('RGB')
 
         detections = []
         top3_predictions = []
@@ -232,6 +239,9 @@ def process_pil_image(pil_image: Image.Image, user_id: int, db: sqlite3.Connecti
         }
     except HTTPException:
         raise
+    except MemoryError as me:
+        logger.error("OOM during YOLO inference — image too large for Render free tier", extra={"user_id": user_id})
+        raise HTTPException(status_code=503, detail="Server ran out of memory processing this image. Please try a smaller or less complex photo.")
     except Exception as e:
         logger.error("Analyze meal failed", extra={"user_id": user_id, "error": str(e)}, exc_info=True)
         import traceback
