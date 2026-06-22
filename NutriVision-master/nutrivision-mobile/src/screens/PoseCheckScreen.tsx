@@ -190,12 +190,14 @@ export default function PoseCheckScreen() {
   const restTimerRef = useRef<any>(null);
   const countdownTimerRef = useRef<any>(null);
   const frameTimerRef = useRef<any>(null);
+  const positionTimerRef = useRef<any>(null);
 
   // Rep tracking state machine helper refs
   const repPhase = useRef<"up" | "down">("up");
   const lastAngle = useRef(0);
 
-  // Simulated setup loading
+  // Phase 1: loading → get_in_position after 1.5s
+  // Phase 2: get_in_position → countdown after 3s (auto-advance without pose check)
   useEffect(() => {
     const loadTimer = setTimeout(() => {
       setPhase("get_in_position");
@@ -207,8 +209,31 @@ export default function PoseCheckScreen() {
       if (restTimerRef.current) clearInterval(restTimerRef.current);
       if (timerRef.current) clearInterval(timerRef.current);
       if (frameTimerRef.current) cancelAnimationFrame(frameTimerRef.current);
+      if (positionTimerRef.current) clearTimeout(positionTimerRef.current);
     };
   }, []);
+
+  // Auto-advance from get_in_position → countdown after 3 seconds
+  useEffect(() => {
+    if (phase === "get_in_position") {
+      setPositionReady(false);
+      positionHeldFrames.current = 0;
+
+      // Show a "getting ready" indicator then auto-start countdown
+      const readyTimer = setTimeout(() => {
+        setPositionReady(true);
+      }, 1500);
+
+      positionTimerRef.current = setTimeout(() => {
+        startCountdown();
+      }, 3000);
+
+      return () => {
+        clearTimeout(readyTimer);
+        if (positionTimerRef.current) clearTimeout(positionTimerRef.current);
+      };
+    }
+  }, [phase]);
 
   const getTip = (jointName: string): string => {
     const tips: Record<string, string> = {
@@ -252,30 +277,7 @@ export default function PoseCheckScreen() {
       setTip("");
     }
     
-    // PHASE LOGIC
-    if (phase === "get_in_position" || phase === "detecting_ready") {
-      if (phase === "get_in_position") {
-        setPhase("detecting_ready");
-      }
-      
-      const ready = isInStartingPosition(kps, exercise);
-      
-      if (ready) {
-        positionHeldFrames.current++;
-        setPositionReady(true);
-        
-        // Start countdown once held long enough
-        if (positionHeldFrames.current >= POSITION_HOLD_FRAMES) {
-          positionHeldFrames.current = 0;
-          startCountdown();
-        }
-      } else {
-        positionHeldFrames.current = 0;
-        setPositionReady(false);
-      }
-      return; // Don't count reps yet
-    }
-    
+    // PHASE LOGIC - only count reps when in exercising phase
     if (phase === "exercising") {
       countRep(kps);
     }
