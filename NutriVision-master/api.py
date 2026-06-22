@@ -1,6 +1,32 @@
+import os
+# Force multi-threaded BLAS/OpenMP libraries to use a single thread to minimize RAM
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
+# Monkeypatch ONNX Runtime to force single-threaded execution globally
+try:
+    import onnxruntime as ort
+    original_InferenceSession = ort.InferenceSession
+
+    def wrapped_InferenceSession(path_or_bytes, sess_options=None, *args, **kwargs):
+        if sess_options is None:
+            sess_options = ort.SessionOptions()
+        sess_options.intra_op_num_threads = 1
+        sess_options.inter_op_num_threads = 1
+        sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        return original_InferenceSession(path_or_bytes, sess_options, *args, **kwargs)
+
+    ort.InferenceSession = wrapped_InferenceSession
+except ImportError:
+    pass
+
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI, Response
+
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from config import config
