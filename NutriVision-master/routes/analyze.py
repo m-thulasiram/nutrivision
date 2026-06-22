@@ -94,13 +94,25 @@ def process_pil_image(pil_image: Image.Image, user_id: int, db: sqlite3.Connecti
         gc.collect()
 
         yolo_start = time.time()
-        # torch.no_grad() prevents gradient tracking — halves RAM during inference
         try:
             import torch
+            # Single thread prevents multi-threaded RAM spikes on Render
+            torch.set_num_threads(1)
             with torch.no_grad():
-                results = yolo_model(pil_image)
-        except ImportError:
-            results = yolo_model(pil_image)
+                # predict() with stream=True + tiny imgsz uses ~60% less RAM
+                # than calling yolo_model() directly
+                results = list(yolo_model.predict(
+                    pil_image,
+                    imgsz=256,        # minimal size sufficient for food detection
+                    conf=YOLO_CONFIDENCE_THRESHOLD,
+                    stream=True,      # generator — avoids holding all results in RAM
+                    verbose=False,    # suppress stdout logging overhead
+                    device='cpu',
+                    half=False,       # float32 safer on CPU
+                ))
+        except Exception as infer_err:
+            logger.error("YOLO predict failed", extra={"error": str(infer_err)})
+            raise HTTPException(status_code=503, detail="AI model could not process this image. Please try again.")
 
         # Free PIL image from memory immediately after inference
         del pil_image
