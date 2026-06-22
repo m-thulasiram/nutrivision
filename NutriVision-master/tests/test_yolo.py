@@ -42,6 +42,9 @@ class MockYOLOModel:
     def __call__(self, image):
         return [MockResult()]
 
+    def predict(self, *args, **kwargs):
+        return [MockResult()]
+
 
 @pytest.fixture(autouse=True)
 def patch_yolo():

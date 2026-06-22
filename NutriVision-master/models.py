@@ -67,15 +67,18 @@ def load_models() -> Models:
     yolo_path = os.path.join("runs", "detect", "train2", "weights", "best.pt")
     if not os.path.exists(yolo_path):
         raise RuntimeError(f"Missing YOLO weights at {yolo_path}")
-    # Force CPU-only inference — Render free tier has no GPU
-    # task='detect' avoids loading unnecessary model heads
+    # Use ONNX model — onnxruntime inference uses ~40% less RAM than PyTorch
+    # best.onnx was exported at imgsz=256 from best.pt
+    yolo_path = os.path.join("runs", "detect", "train2", "weights", "best.onnx")
+    if not os.path.exists(yolo_path):
+        # Fallback to .pt if ONNX not present
+        yolo_path = os.path.join("runs", "detect", "train2", "weights", "best.pt")
+    if not os.path.exists(yolo_path):
+        raise RuntimeError(f"Missing YOLO weights at runs/detect/train2/weights/")
     yolo_model = YOLO(yolo_path, task='detect')
-    yolo_model.to('cpu')
-    # Set model to eval mode to disable dropout/batchnorm training behavior
-    if hasattr(yolo_model, 'model') and yolo_model.model is not None:
-        yolo_model.model.eval()
     import gc
     gc.collect()
+
 
     _instance = Models(
         autoencoder=autoencoder,

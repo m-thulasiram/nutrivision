@@ -25,3 +25,4 @@ locust==2.32.0
 pytest-cov==6.0.0
 ruff==0.9.1
 psycopg2-binary==2.9.10
+onnxruntime>=1.16.0
