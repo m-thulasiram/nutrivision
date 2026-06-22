@@ -277,10 +277,8 @@ export default function PoseCheckScreen() {
       setTip("");
     }
     
-    // PHASE LOGIC - only count reps when in exercising phase
-    if (phase === "exercising") {
-      countRep(kps);
-    }
+    // Rep counting is handled by animation cycle completion in runRepAnimation
+    // No angle-based counting needed here
   }
 
   function startCountdown() {
@@ -302,41 +300,18 @@ export default function PoseCheckScreen() {
     }, 1000);
   }
 
-  const countRep = (kps: Keypoint[]) => {
-    let angle = 180;
-    
-    const isSquat = exercise.id.includes("squat") || exercise.id.includes("baithak") || exercise.id.includes("lunge") || exercise.id.includes("virabhadrasana") || exercise.id.includes("uth_baith");
-    const isPushup = exercise.id.includes("push") || exercise.id.includes("dand") || exercise.id.includes("chaturanga") || exercise.id.includes("dip");
-
-    if (isSquat) {
-      if (kps[13] && kps[11] && kps[15]) {
-        angle = calculateAngle(kps[11], kps[13], kps[15]);
+  // Rep counting is handled by animation cycle completion (see runRepAnimation)
+  // This ensures ALL exercises count reps, not just squat/pushup types
+  const handleRepComplete = () => {
+    Vibration.vibrate(50);
+    setRepCount((prev) => {
+      const next = prev + 1;
+      if (next >= exercise.reps) {
+        setTimeout(() => handleSetComplete(), 500);
+        return 0;
       }
-    } else if (isPushup) {
-      if (kps[5] && kps[7] && kps[9]) {
-        angle = calculateAngle(kps[5], kps[7], kps[9]);
-      }
-    }
-    
-    // State machine: detect down then up = 1 rep
-    if (repPhase.current === "up" && angle < 110) {
-      repPhase.current = "down";
-    } else if (repPhase.current === "down" && angle > 155) {
-      repPhase.current = "up";
-      setRepCount((prev) => {
-        const next = prev + 1;
-        Vibration.vibrate(50);
-        if (next >= exercise.reps) {
-          setTimeout(() => {
-            handleSetComplete();
-          }, 500);
-          return 0;
-        }
-        return next;
-      });
-    }
-    
-    lastAngle.current = angle;
+      return next;
+    });
   };
 
   const handleSetComplete = () => {
@@ -413,6 +388,10 @@ export default function PoseCheckScreen() {
   const computeSimulatedJoints = (value: number): Record<string, [number, number]> => {
     const isSquat = exercise.id.includes("squat") || exercise.id.includes("baithak") || exercise.id.includes("lunge") || exercise.id.includes("virabhadrasana") || exercise.id.includes("uth_baith");
     const isPushup = exercise.id.includes("push") || exercise.id.includes("dand") || exercise.id.includes("chaturanga") || exercise.id.includes("dip");
+    const isTwist = exercise.id.includes("vakrasana") || exercise.id.includes("twist");
+    const isRise = exercise.id.includes("tadasana");
+    const isLocust = exercise.id.includes("shalabhasana");
+    const isSurya = exercise.id.includes("surya");
 
     const base: Record<string, [number, number]> = {
       left_shoulder:   [0.36, 0.22],
@@ -430,36 +409,69 @@ export default function PoseCheckScreen() {
     };
 
     if (isSquat) {
+      // Hips drop, knees bend outward
       const hipDrop = value * 0.15;
       const kneeOut = value * 0.05;
-
       base.left_hip = [base.left_hip[0] - kneeOut, base.left_hip[1] + hipDrop];
       base.right_hip = [base.right_hip[0] + kneeOut, base.right_hip[1] + hipDrop];
-
       base.left_knee = [base.left_knee[0] - kneeOut * 1.5, base.left_knee[1] + hipDrop * 0.5];
       base.right_knee = [base.right_knee[0] + kneeOut * 1.5, base.right_knee[1] + hipDrop * 0.5];
-
       base.left_shoulder = [base.left_shoulder[0] - 0.01 * value, base.left_shoulder[1] + hipDrop * 0.8];
       base.right_shoulder = [base.right_shoulder[0] + 0.01 * value, base.right_shoulder[1] + hipDrop * 0.8];
     } else if (isPushup) {
+      // Shoulders drop, elbows bend
       const drop = value * 0.12;
       const elbowBend = value * 0.08;
-
       base.left_shoulder = [base.left_shoulder[0], base.left_shoulder[1] + drop];
       base.right_shoulder = [base.right_shoulder[0], base.right_shoulder[1] + drop];
-      
       base.left_elbow = [base.left_elbow[0] - elbowBend, base.left_elbow[1] + drop * 0.5];
       base.right_elbow = [base.right_elbow[0] + elbowBend, base.right_elbow[1] + drop * 0.5];
-
       base.left_hip = [base.left_hip[0], base.left_hip[1] + drop * 0.8];
       base.right_hip = [base.right_hip[0], base.right_hip[1] + drop * 0.8];
-
       base.left_knee = [base.left_knee[0], base.left_knee[1] + drop * 0.5];
       base.right_knee = [base.right_knee[0], base.right_knee[1] + drop * 0.5];
-    } else {
-      const shake = (Math.random() - 0.5) * 0.005;
-      base.left_hip = [base.left_hip[0], base.left_hip[1] + shake];
-      base.right_hip = [base.right_hip[0], base.right_hip[1] + shake];
+    } else if (isSurya) {
+      // Sun salutation: arms raise then full forward fold
+      const fold = value * 0.18;
+      base.left_shoulder = [base.left_shoulder[0] - 0.02, base.left_shoulder[1] + fold * 0.5];
+      base.right_shoulder = [base.right_shoulder[0] + 0.02, base.right_shoulder[1] + fold * 0.5];
+      base.left_elbow = [base.left_elbow[0], base.left_elbow[1] + fold];
+      base.right_elbow = [base.right_elbow[0], base.right_elbow[1] + fold];
+      base.left_wrist = [base.left_wrist[0], base.left_wrist[1] + fold * 1.2];
+      base.right_wrist = [base.right_wrist[0], base.right_wrist[1] + fold * 1.2];
+      base.left_hip = [base.left_hip[0], base.left_hip[1] + fold * 0.3];
+      base.right_hip = [base.right_hip[0], base.right_hip[1] + fold * 0.3];
+    } else if (isTwist) {
+      // Russian twist: shoulders rotate left/right while hips stay
+      const twistAmt = value * 0.12;
+      base.left_shoulder = [base.left_shoulder[0] - twistAmt, base.left_shoulder[1]];
+      base.right_shoulder = [base.right_shoulder[0] - twistAmt, base.right_shoulder[1]];
+      base.left_elbow = [base.left_elbow[0] - twistAmt * 1.5, base.left_elbow[1] + 0.04];
+      base.right_elbow = [base.right_elbow[0] - twistAmt * 0.5, base.right_elbow[1] + 0.04];
+      base.left_wrist = [base.left_wrist[0] - twistAmt * 2, base.left_wrist[1] + 0.06];
+      base.right_wrist = [base.right_wrist[0] - twistAmt * 1, base.right_wrist[1] + 0.06];
+    } else if (isRise) {
+      // Calf raise: slight upward body lift, arms overhead
+      const rise = value * 0.04;
+      base.left_shoulder = [base.left_shoulder[0], base.left_shoulder[1] - rise];
+      base.right_shoulder = [base.right_shoulder[0], base.right_shoulder[1] - rise];
+      base.left_elbow = [base.left_elbow[0], base.left_elbow[1] - rise * 0.8];
+      base.right_elbow = [base.right_elbow[0], base.right_elbow[1] - rise * 0.8];
+      base.left_wrist = [base.left_wrist[0], base.left_wrist[1] - rise * 1.2];
+      base.right_wrist = [base.right_wrist[0], base.right_wrist[1] - rise * 1.2];
+      base.left_ankle = [base.left_ankle[0], base.left_ankle[1] - rise * 0.5];
+      base.right_ankle = [base.right_ankle[0], base.right_ankle[1] - rise * 0.5];
+    } else if (isLocust) {
+      // Locust hold: chest and legs lift up
+      const lift = value * 0.08;
+      base.left_shoulder = [base.left_shoulder[0], base.left_shoulder[1] - lift];
+      base.right_shoulder = [base.right_shoulder[0], base.right_shoulder[1] - lift];
+      base.left_elbow = [base.left_elbow[0], base.left_elbow[1] - lift * 0.5];
+      base.right_elbow = [base.right_elbow[0], base.right_elbow[1] - lift * 0.5];
+      base.left_knee = [base.left_knee[0], base.left_knee[1] - lift];
+      base.right_knee = [base.right_knee[0], base.right_knee[1] - lift];
+      base.left_ankle = [base.left_ankle[0], base.left_ankle[1] - lift * 1.2];
+      base.right_ankle = [base.right_ankle[0], base.right_ankle[1] - lift * 1.2];
     }
 
     return base;
@@ -537,6 +549,7 @@ export default function PoseCheckScreen() {
         }
       };
     } else {
+      // Each full animation cycle (0→1→0) = 1 rep for ALL exercise types
       const runRepAnimation = () => {
         Animated.sequence([
           Animated.timing(animationProgress, {
@@ -551,6 +564,8 @@ export default function PoseCheckScreen() {
           }),
         ]).start((result) => {
           if (result.finished && phase === "exercising" && !isPaused) {
+            // Count 1 rep per completed animation cycle — works for ALL exercises
+            handleRepComplete();
             runRepAnimation();
           }
         });
