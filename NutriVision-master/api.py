@@ -1,6 +1,8 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from config import config
 from database import init_db
 from logging_config import setup_logging, get_logger
@@ -115,5 +117,23 @@ app.include_router(recommend_router)
 app.include_router(workouts_router)
 app.include_router(copilot_router)
 app.include_router(scanner_router)
+
+# Serve frontend SPA (must be last to not shadow API routes)
+FRONTEND_DIR = Path(__file__).parent / "nutrivision-ui" / "dist"
+if FRONTEND_DIR.exists():
+    from fastapi.responses import FileResponse
+
+    app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIR / "assets")), name="assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_frontend(full_path: str):
+        file_path = FRONTEND_DIR / full_path
+        if file_path.is_file():
+            return FileResponse(str(file_path))
+        return FileResponse(str(FRONTEND_DIR / "index.html"))
+
+    logger.info("Frontend SPA mounted", extra={"path": str(FRONTEND_DIR)})
+else:
+    logger.warning("Frontend dist not found, API-only mode", extra={"path": str(FRONTEND_DIR)})
 
 logger.info("NutriVision API initialized", extra={"env": config.env, "debug": config.debug})
