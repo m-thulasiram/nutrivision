@@ -629,9 +629,62 @@ export default function ScanScreen({ navigation }: { navigation: any }) {
           ) : (
             <View style={styles.noDetections}>
               <Text style={styles.noDetectTitle}>No food detected</Text>
-              <Text style={styles.noDetectSub}>
-                Confidence: {topPredictions.length > 0 ? `${Math.round(topPredictions[0].prob * 100)}%` : 'low'}
-              </Text>
+              
+              {topPredictions.length > 0 ? (
+                <View style={styles.suggestionsContainer}>
+                  <Text style={styles.suggestionsTitle}>Did you mean one of these?</Text>
+                  {topPredictions.map((pred, pIdx) => {
+                    const cleanName = pred.label.replace('_', ' ');
+                    return (
+                      <TouchableOpacity
+                        key={pred.label}
+                        style={styles.suggestionItem}
+                        onPress={async () => {
+                          const dummyDet: DetectionResult = {
+                            class_name: cleanName,
+                            confidence: pred.prob,
+                            calories: 250,
+                            protein: 8,
+                            carbs: 30,
+                            fat: 6,
+                            estimated_weight_g: 100,
+                            raw_model_label: pred.label
+                          };
+                          setDetections([dummyDet]);
+                          try {
+                            const matchData = await apiCall<{
+                              success: boolean;
+                              candidates: any[];
+                            }>('/api/scanner/match', 'POST', {
+                              detected_class: pred.label,
+                            }, true);
+                            if (matchData.success && matchData.candidates.length > 0) {
+                              setCandidatesMap((prev) => ({
+                                ...prev,
+                                [pred.label]: matchData.candidates
+                              }));
+                              setSelectedCandidates((prev) => ({
+                                ...prev,
+                                [pred.label]: matchData.candidates[0]
+                              }));
+                            }
+                          } catch (err) {
+                            console.error('Failed to match prediction:', err);
+                          }
+                        }}
+                      >
+                        <Text style={styles.suggestionText}>{cleanName}</Text>
+                        <Text style={styles.suggestionPct}>{Math.round(pred.prob * 100)}% Match</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              ) : (
+                <Text style={styles.noDetectSub}>
+                  Please try taking a clearer photo from a different angle.
+                </Text>
+              )}
+
               <TouchableOpacity
                 style={styles.tryAgainButton}
                 onPress={() => setScreenState('camera')}
@@ -1136,6 +1189,44 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     padding: 24,
     alignItems: 'center',
+  },
+  suggestionsContainer: {
+    width: '100%',
+    marginVertical: 16,
+    backgroundColor: '#F9FAFB',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  suggestionsTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#4B5563',
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  suggestionItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  suggestionText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1F2937',
+  },
+  suggestionPct: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1D9E75',
   },
   noDetectTitle: {
     fontSize: 18,
