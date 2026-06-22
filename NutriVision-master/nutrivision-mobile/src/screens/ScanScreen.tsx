@@ -76,6 +76,7 @@ export default function ScanScreen({ navigation }: { navigation: any }) {
   const [selectedMealTime, setSelectedMealTime] = useState('breakfast');
   const [error, setError] = useState('');
   const [processing, setProcessing] = useState(false);
+  const [processingStatus, setProcessingStatus] = useState('Analysing your meal...');
   const [flash, setFlash] = useState(false);
   const [candidatesMap, setCandidatesMap] = useState<Record<string, any[]>>({});
   const [selectedCandidates, setSelectedCandidates] = useState<Record<string, any>>({});
@@ -143,6 +144,18 @@ export default function ScanScreen({ navigation }: { navigation: any }) {
   const analyzeImage = async (base64Data: string | null, uri: string) => {
     setProcessing(true);
     setError('');
+    setProcessingStatus('Analysing your meal...');
+
+    // Show warm-up message timers for Render cold start UX
+    const t1 = setTimeout(() => setProcessingStatus('🔄 Connecting to server...'), 8000);
+    const t2 = setTimeout(() => setProcessingStatus('⏳ Server is waking up (free tier)...'), 20000);
+    const t3 = setTimeout(() => setProcessingStatus('⏳ Still warming up, please wait...'), 45000);
+    const t4 = setTimeout(() => setProcessingStatus('🐌 Almost there, Render is slow to start...'), 70000);
+
+    const clearTimers = () => {
+      clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); clearTimeout(t4);
+    };
+
     try {
       const token = await getToken();
 
@@ -151,37 +164,47 @@ export default function ScanScreen({ navigation }: { navigation: any }) {
         throw new Error('Image too large. Please try again — camera will compress it automatically.');
       }
 
-      // 30-second timeout to prevent hanging on Render cold start
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 30000);
+      // Helper to make one attempt with 90s timeout
+      const doFetch = async (): Promise<Response> => {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 90000);
+        try {
+          if (base64Data) {
+            return await fetch(`${BASE_URL}/api/analyze-meal-b64`, {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${token}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ image_base64: base64Data }),
+              signal: controller.signal,
+            });
+          } else {
+            const formData = new FormData();
+            formData.append('image', { uri, type: 'image/jpeg', name: 'meal.jpg' } as any);
+            return await fetch(`${BASE_URL}/api/analyze-meal`, {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${token}` },
+              body: formData,
+              signal: controller.signal,
+            });
+          }
+        } finally {
+          clearTimeout(timeoutId);
+        }
+      };
 
       let response: Response;
-
       try {
-        if (base64Data) {
-          // Send as base64 JSON — reliable on all Android versions
-          response = await fetch(`${BASE_URL}/api/analyze-meal-b64`, {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${token}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ image_base64: base64Data }),
-            signal: controller.signal,
-          });
+        response = await doFetch();
+      } catch (firstErr: any) {
+        // If first attempt timed out (Render cold start), auto-retry once
+        if (firstErr?.name === 'AbortError') {
+          setProcessingStatus('🔁 Retrying after server wake-up...');
+          response = await doFetch();
         } else {
-          // Fallback: multipart FormData
-          const formData = new FormData();
-          formData.append('image', { uri, type: 'image/jpeg', name: 'meal.jpg' } as any);
-          response = await fetch(`${BASE_URL}/api/analyze-meal`, {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${token}` },
-            body: formData,
-            signal: controller.signal,
-          });
+          throw firstErr;
         }
-      } finally {
-        clearTimeout(timeoutId);
       }
 
       const responseText = await response.text();
@@ -193,7 +216,7 @@ export default function ScanScreen({ navigation }: { navigation: any }) {
         throw new Error(
           responseText.trim()
             ? `Server error (${response.status}): ${responseText.slice(0, 120)}`
-            : `Server error (${response.status}): No response — server may be restarting. Please try again in 30 seconds.`
+            : `Server error (${response.status}): No response — server may be restarting. Please try again.`
         );
       }
       if (!response.ok) {
@@ -242,6 +265,7 @@ export default function ScanScreen({ navigation }: { navigation: any }) {
 
     } catch (err: any) {
       const msg = err?.message || String(err);
+      clearTimers();
       if (err instanceof ApiRequestError) {
         if (err.status === 401) {
           navigation.reset({ index: 0, routes: [{ name: 'SignIn' }] });
@@ -249,12 +273,16 @@ export default function ScanScreen({ navigation }: { navigation: any }) {
         }
         setError(err.message);
         alert('Server Error: ' + err.message);
+      } else if (err?.name === 'AbortError') {
+        setError('Request timed out — server took too long. Please try again.');
+        alert('Network Error: Request timed out after 3 minutes. The server may be overloaded. Please try again.');
       } else {
         setError('Analysis failed: ' + msg);
         alert('Network Error: ' + msg);
       }
       setScreenState('camera');
     } finally {
+      clearTimers();
       setProcessing(false);
     }
   };
@@ -423,8 +451,12 @@ export default function ScanScreen({ navigation }: { navigation: any }) {
         ) : null}
         <Animated.View style={[styles.processingOverlay, { opacity: pulseAnim }]}>
           <ActivityIndicator size="large" color="#1D9E75" />
-          <Text style={styles.processingText}>Analysing your meal...</Text>
-          <Text style={styles.processingSubtext}>Identifying foods and calculating nutrition</Text>
+          <Text style={styles.processingText}>{processingStatus}</Text>
+          <Text style={styles.processingSubtext}>
+            {processingStatus.includes('waking') || processingStatus.includes('warming') || processingStatus.includes('slow') || processingStatus.includes('Retry')
+              ? 'The free server sleeps when idle.\nFirst request takes 60-90 seconds.'
+              : 'Identifying foods and calculating nutrition'}
+          </Text>
         </Animated.View>
       </View>
     );
