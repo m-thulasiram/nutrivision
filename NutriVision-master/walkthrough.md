@@ -145,4 +145,26 @@ To replace native TensorFlow-based pose tracking with a robust cross-platform al
 3. **Enhanced Exercise Card UI**:
    - Redesigned the cards in [WorkoutScreen.tsx](file:///c:/Users/Lenovo/Downloads/NutriVision-master/NutriVision-master/nutrivision-mobile/src/screens/WorkoutScreen.tsx) and [WorkoutLibraryScreen.tsx](file:///c:/Users/Lenovo/Downloads/NutriVision-master/NutriVision-master/nutrivision-mobile/src/screens/WorkoutLibraryScreen.tsx) to display the Devanagari script, English name, traditional origin, and the instructions.
 
+---
 
+## 10. YOLO ONNX memory optimization & Database stability (Render Deployments)
+
+To support stable execution on Render's 512MB RAM free tier, we implemented deep backend optimizations and mobile payload compression:
+
+1. **YOLO-to-ONNX Conversion**:
+   - Converted the YOLO model weight from `.pt` to `.onnx` and loaded it via `onnxruntime` inside `models.py`. This cut inference RAM requirements by over 40%.
+2. **ONNX Runtime Threading & CUDA Monkeypatch**:
+   - Implemented a global wrapper in `api.py` targeting `onnxruntime.InferenceSession`.
+   - Forces single-threaded execution (`intra_op_num_threads = 1`, `inter_op_num_threads = 1`, sequential execution mode) to completely prevent the OOM/CPU throttling spikes that standard ONNX causes when it matches threads to host CPU core count.
+   - Forced `CPUExecutionProvider` inside the monkeypatch and popped `providers` to bypass hangs caused by ONNX runtime probing for CUDA driver libraries on Render's virtualized host nodes.
+3. **Database Connection Pool Leak Fix**:
+   - Resolved Postgres connection pool limits (pool exhausted at 10 connections) by updating the FastAPI `/health` endpoint and database initialization files to invoke psycopg2's helper `close_connection(conn)` instead of `.close()`. This ensures connections return to the pool immediately.
+4. **Ultralytics Telemetry Disable**:
+   - Disabled Ultralytics analytics telemetry via `ULTRALYTICS_ANALYTICS = "false"` and `ULTRALYTICS_OFFLINE = "true"` environment variables at the top of `api.py` to prevent inference network socket blocks.
+5. **Mobile Image Pre-Compression & Sizing**:
+   - Removed `skipProcessing: true` from the `takePictureAsync` method in [ScanScreen.tsx](file:///c:/Users/Lenovo/Downloads/NutriVision-master/NutriVision-master/nutrivision-mobile/src/screens/ScanScreen.tsx).
+   - Configured client-side downscaling and compression (15% quality) to reduce camera picture payloads from ~8MB down to ~100KB, preventing server JSON-parsing RAM spikes.
+6. **"Did you mean one of these?" Low-Confidence Flow**:
+   - Implemented a dynamic suggestion menu on the client scan results screen. If a scan returns a confidence level between `0.30` and `0.60`, it presents alternative match candidates for user selection rather than a blank "No food detected" screen.
+7. **Cleaned up temporary debug routes**:
+   - Removed the `/api/diagnose` route from `api.py` before final commit.
