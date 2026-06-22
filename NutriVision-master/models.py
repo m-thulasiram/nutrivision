@@ -67,7 +67,15 @@ def load_models() -> Models:
     yolo_path = os.path.join("runs", "detect", "train2", "weights", "best.pt")
     if not os.path.exists(yolo_path):
         raise RuntimeError(f"Missing YOLO weights at {yolo_path}")
-    yolo_model = YOLO(yolo_path)
+    # Force CPU-only inference — Render free tier has no GPU
+    # task='detect' avoids loading unnecessary model heads
+    yolo_model = YOLO(yolo_path, task='detect')
+    yolo_model.to('cpu')
+    # Set model to eval mode to disable dropout/batchnorm training behavior
+    if hasattr(yolo_model, 'model') and yolo_model.model is not None:
+        yolo_model.model.eval()
+    import gc
+    gc.collect()
 
     _instance = Models(
         autoencoder=autoencoder,
