@@ -25,7 +25,7 @@
       "favicon": "./assets/favicon.png"
     },
     "extra": {
-      "apiUrl": "http://192.168.29.167:8000",
+      "apiUrl": "https://nutrivision-1-1kwu.onrender.com",
       "eas": {
         "projectId": "5ba1d34f-0a03-497a-9e23-2dce75a04e6a"
       }

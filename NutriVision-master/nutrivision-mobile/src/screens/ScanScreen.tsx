@@ -164,7 +164,13 @@ export default function ScanScreen({ navigation }: { navigation: any }) {
         });
       }
 
-      const data = await response.json();
+      const responseText = await response.text();
+      let data: any;
+      try {
+        data = JSON.parse(responseText);
+      } catch (err) {
+        throw new Error(`HTTP ${response.status}: ${responseText.slice(0, 150) || 'Empty response'}`);
+      }
       if (!response.ok) {
         throw new ApiRequestError(response.status, data.detail || 'Analysis failed');
       }

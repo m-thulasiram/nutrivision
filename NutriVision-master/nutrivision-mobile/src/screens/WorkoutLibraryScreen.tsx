@@ -132,7 +132,15 @@ export default function WorkoutLibraryScreen({ navigation }: { navigation: any }
           return (
             <View key={ex.id} style={styles.card}>
               <View style={styles.cardHeader}>
-                <Text style={styles.exName}>{ex.name}</Text>
+                <View style={styles.exerciseNames}>
+                  {ex.script && (
+                    <Text style={styles.exerciseScript}>{ex.script}</Text>
+                  )}
+                  <Text style={styles.exName}>{ex.name}</Text>
+                  {ex.origin && (
+                    <Text style={styles.exerciseOrigin}>{ex.origin}</Text>
+                  )}
+                </View>
                 <View style={styles.muscleBadge}>
                   <Text style={styles.muscleBadgeText}>{ex.muscle}</Text>
                 </View>
@@ -151,6 +159,10 @@ export default function WorkoutLibraryScreen({ navigation }: { navigation: any }
                 )}
                 <Text style={styles.statText}>~{ex.caloriesPerMin * Math.ceil(ex.durationSec / 60)} kcal</Text>
               </View>
+
+              {ex.description && (
+                <Text style={styles.exerciseDesc}>{ex.description}</Text>
+              )}
 
               <View style={styles.buttonRow}>
                 <TouchableOpacity
@@ -303,8 +315,31 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 2,
   },
-  cardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  exName: { fontSize: 17, fontWeight: '700', color: '#1A1A1A' },
+  cardHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
+  exName: { fontSize: 15, fontWeight: '600', color: '#1A1A1A' },
+  exerciseNames: {
+    flex: 1,
+    marginRight: 8,
+  },
+  exerciseScript: {
+    fontSize: 18,
+    color: "#1D9E75",
+    fontWeight: "500",
+    marginBottom: 2,
+  },
+  exerciseOrigin: {
+    fontSize: 11,
+    color: "#9CA3AF",
+    marginTop: 2,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  exerciseDesc: {
+    fontSize: 12,
+    color: "#6B7280",
+    marginTop: 6,
+    lineHeight: 18,
+  },
   muscleBadge: {
     backgroundColor: '#EDF9F5',
     paddingHorizontal: 10,

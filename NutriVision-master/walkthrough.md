@@ -113,3 +113,36 @@ To replace native TensorFlow-based pose tracking with a robust cross-platform al
 
 3. **Fixed Redirect Test**:
    - Updated the `HTTPSRedirectMiddleware` test in [test_middleware.py](file:///c:/Users/Lenovo/Downloads/NutriVision-master/NutriVision-master/tests/test_middleware.py) to request `/api/auth/login` instead of `/health`, preventing conflicts with the health check redirection bypass.
+
+---
+
+## 8. Mobile Image Scanning memory and Connection Fixes
+
+1. **Backend Memory Optimization to Prevent Out Of Memory (OOM) Crashes**:
+   - High-resolution photos captured on modern phones can consume massive amounts of memory when processed by PyTorch/YOLO, causing Render containers (512MB RAM limit) to crash (OOM) and drop the connection.
+   - Updated `process_pil_image` in [routes/analyze.py](file:///c:/Users/Lenovo/Downloads/NutriVision-master/NutriVision-master/routes/analyze.py) to automatically scale incoming PIL images to a maximum dimension of `640px` in-place (`pil_image.thumbnail((640, 640))`). This reduces raw memory usage by over 95% while keeping the image size native to the YOLO model (which downscales internally to 640px anyway).
+
+2. **Improved Client-Side Error Visibility**:
+   - Refactored `analyzeImage` in [ScanScreen.tsx](file:///c:/Users/Lenovo/Downloads/NutriVision-master/NutriVision-master/nutrivision-mobile/src/screens/ScanScreen.tsx) to read the response as raw text and parse it safely rather than immediately calling `response.json()`.
+   - If the server responds with a non-JSON error (e.g. 502 Bad Gateway or 413 Payload Too Large), the app now displays the HTTP status and body details instead of crashing with a generic `JSON Parse error: Unexpected end of input`.
+
+3. **Production URL Configuration**:
+   - Updated `apiUrl` in [app.json](file:///c:/Users/Lenovo/Downloads/NutriVision-master/NutriVision-master/nutrivision-mobile/app.json) to point directly to `https://nutrivision-1-1kwu.onrender.com`.
+
+---
+
+## 9. Workout Camera Phase Flow & Traditional Exercise Mapping
+
+1. **Implemented Workout Phase State Machine**:
+   - Refactored [PoseCheckScreen.tsx](file:///c:/Users/Lenovo/Downloads/NutriVision-master/NutriVision-master/nutrivision-mobile/src/screens/PoseCheckScreen.tsx) to implement a strict 7-phase flow (`loading`, `get_in_position`, `detecting_ready`, `countdown`, `exercising`, `resting`, `complete`).
+   - Prevents auto-counting before the user is in position by requiring the user to hold the correct starting posture for 15 frames (~0.5 seconds at 30fps) before triggering a 3-second countdown vibration sequence.
+   - Integrated full support for time-based holds (e.g. Plank / Kumbhakasana), starting a countdown timer instead of rep-based animation loops.
+
+2. **Mapped Exercises to Traditional Indian Names**:
+   - Updated [exercises.ts](file:///c:/Users/Lenovo/Downloads/NutriVision-master/NutriVision-master/nutrivision-mobile/src/constants/exercises.ts) to define the `script`, `origin`, `startingPositionAngles`, `isTimeBased`, and `description` on the `Exercise` configuration structure. Re-declared the 10 core exercises using their traditional names (e.g., Dand, Baithak, Kumbhakasana, Virabhadrasana).
+   - Updated [exerciseMapping.ts](file:///c:/Users/Lenovo/Downloads/NutriVision-master/NutriVision-master/nutrivision-mobile/src/constants/exerciseMapping.ts) to map modern, transliterated, and Devanagari names (e.g., "Push Up", "Dand", "दंड") to the unified configuration.
+
+3. **Enhanced Exercise Card UI**:
+   - Redesigned the cards in [WorkoutScreen.tsx](file:///c:/Users/Lenovo/Downloads/NutriVision-master/NutriVision-master/nutrivision-mobile/src/screens/WorkoutScreen.tsx) and [WorkoutLibraryScreen.tsx](file:///c:/Users/Lenovo/Downloads/NutriVision-master/NutriVision-master/nutrivision-mobile/src/screens/WorkoutLibraryScreen.tsx) to display the Devanagari script, English name, traditional origin, and the instructions.
+
+

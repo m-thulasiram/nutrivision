@@ -35,6 +35,9 @@ def process_pil_image(pil_image: Image.Image, user_id: int, db: sqlite3.Connecti
         raise HTTPException(status_code=500, detail="YOLO model is not loaded")
 
     try:
+        # Resize image in-place to max 640px to prevent PyTorch memory spikes (OOM) on Render
+        pil_image.thumbnail((640, 640))
+
         detections = []
         top3_predictions = []
 

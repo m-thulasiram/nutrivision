@@ -930,15 +930,36 @@ const styles = StyleSheet.create({
   exerciseHeader: {
     marginBottom: 10,
   },
-  exerciseName: {
-    fontSize: 14,
+  exerciseNames: {
+    marginBottom: 4,
+  },
+  exerciseScript: {
+    fontSize: 18,
+    color: "#1D9E75",
     fontWeight: "500",
+    marginBottom: 2,
+  },
+  exerciseName: {
+    fontSize: 15,
+    fontWeight: "600",
     color: "#1A1A1A",
-    marginBottom: 3,
+  },
+  exerciseOrigin: {
+    fontSize: 11,
+    color: "#9CA3AF",
+    marginTop: 2,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
   },
   exerciseMeta: {
     fontSize: 12,
     color: "#6B7280",
+  },
+  exerciseDesc: {
+    fontSize: 12,
+    color: "#6B7280",
+    marginTop: 6,
+    lineHeight: 18,
   },
   exerciseActions: {
     flexDirection: "row",

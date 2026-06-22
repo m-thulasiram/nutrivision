@@ -15,7 +15,34 @@ type RouteParams = {
   exercise: Exercise;
 };
 
-// Connections for drawing skeleton bones
+type WorkoutPhase = 
+  | "loading"         // model loading
+  | "get_in_position" // show instruction
+  | "detecting_ready" // waiting for start pose
+  | "countdown"       // 3-2-1 go
+  | "exercising"      // counting reps
+  | "resting"         // between sets
+  | "complete";       // all sets done
+
+type Keypoint = {
+  name: string;
+  x: number;
+  y: number;
+  score: number;
+};
+
+const KEYPOINT_NAMES = [
+  "nose",
+  "left_eye", "right_eye",
+  "left_ear", "right_ear",
+  "left_shoulder", "right_shoulder",
+  "left_elbow", "right_elbow",
+  "left_wrist", "right_wrist",
+  "left_hip", "right_hip",
+  "left_knee", "right_knee",
+  "left_ankle", "right_ankle",
+];
+
 const SKELETON_CONNECTIONS: [string, string][] = [
   ["left_shoulder",  "right_shoulder"],
   ["left_shoulder",  "left_elbow"],
@@ -31,6 +58,107 @@ const SKELETON_CONNECTIONS: [string, string][] = [
   ["right_knee",     "right_ankle"],
 ];
 
+const JOINT_TRIPLETS: Record<string, [number, number, number]> = {
+  left_elbow:    [5,  7,  9],   // shoulder-elbow-wrist
+  right_elbow:   [6,  8,  10],
+  left_shoulder: [11, 5,  7],   // hip-shoulder-elbow
+  right_shoulder:[12, 6,  8],
+  left_hip:      [5,  11, 13],  // shoulder-hip-knee
+  right_hip:     [6,  12, 14],
+  left_knee:     [11, 13, 15],  // hip-knee-ankle
+  right_knee:    [12, 14, 16],
+};
+
+function calculateAngle(
+  a: Keypoint,
+  b: Keypoint,  // joint being measured
+  c: Keypoint
+): number {
+  const ba = { x: a.x - b.x, y: a.y - b.y };
+  const bc = { x: c.x - b.x, y: c.y - b.y };
+  
+  const dot = ba.x * bc.x + ba.y * bc.y;
+  const magA = Math.sqrt(ba.x ** 2 + ba.y ** 2);
+  const magB = Math.sqrt(bc.x ** 2 + bc.y ** 2);
+  
+  if (magA === 0 || magB === 0) return 180;
+  
+  const cosAngle = Math.max(-1, Math.min(1, dot / (magA * magB)));
+  
+  return Math.round(
+    Math.acos(cosAngle) * (180 / Math.PI)
+  );
+}
+
+function scoreJoint(
+  keypoints: Keypoint[],
+  jointName: string,
+  targetAngle: number,
+  tolerance: number = 20
+): number {
+  const triplet = JOINT_TRIPLETS[jointName];
+  if (!triplet) return 0;
+  
+  const [ai, bi, ci] = triplet;
+  const a = keypoints[ai];
+  const b = keypoints[bi];
+  const c = keypoints[ci];
+  
+  if (!a || !b || !c) return 0;
+  if (a.score < 0.3 || b.score < 0.3 || c.score < 0.3) return 0;
+  
+  const actual = calculateAngle(a, b, c);
+  const diff = Math.abs(actual - targetAngle);
+  
+  if (diff <= tolerance) return 100;
+  if (diff >= tolerance * 3) return 0;
+  
+  return Math.round(
+    100 * (1 - (diff - tolerance) / (tolerance * 2))
+  );
+}
+
+function isInStartingPosition(
+  keypoints: Keypoint[],
+  exercise: Exercise
+): boolean {
+  const { startingPositionAngles } = exercise;
+  
+  if (!startingPositionAngles || Object.keys(startingPositionAngles).length === 0) {
+    return true; // No check defined — allow
+  }
+  
+  let allCorrect = true;
+  
+  for (const [joint, [minAngle, maxAngle]] of Object.entries(startingPositionAngles)) {
+    const triplet = JOINT_TRIPLETS[joint];
+    if (!triplet) continue;
+    
+    const [ai, bi, ci] = triplet;
+    const a = keypoints[ai];
+    const b = keypoints[bi];
+    const c = keypoints[ci];
+    
+    if (!a || !b || !c) { 
+      allCorrect = false; 
+      continue; 
+    }
+    if (a.score < 0.4 || b.score < 0.4 || c.score < 0.4) {
+      allCorrect = false;
+      continue;
+    }
+    
+    const angle = calculateAngle(a, b, c);
+    
+    if (angle < minAngle || angle > maxAngle) {
+      allCorrect = false;
+      break;
+    }
+  }
+  
+  return allCorrect;
+}
+
 export default function PoseCheckScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute();
@@ -40,139 +168,174 @@ export default function PoseCheckScreen() {
   const [repCount, setRepCount] = useState(0);
   const [currentSet, setCurrentSet] = useState(1);
   const [formScore, setFormScore] = useState(85);
-  const [isResting, setIsResting] = useState(false);
-  const [restSeconds, setRestSeconds] = useState(10);
+  const [restSeconds, setRestSeconds] = useState(15);
   const [isPaused, setIsPaused] = useState(false);
-  const [tip, setTip] = useState("Align your body in the frame");
+  const [tip, setTip] = useState("Get in front of the camera");
+
+  const [phase, setPhase] = useState<WorkoutPhase>("loading");
+  const [countdown, setCountdown] = useState(3);
+  const [positionReady, setPositionReady] = useState(false);
+  const positionHeldFrames = useRef(0);
+  const POSITION_HOLD_FRAMES = 15;
+
+  const [timerSeconds, setTimerSeconds] = useState(0);
+  const timerRef = useRef<any>(null);
 
   // Animation values for the simulated skeleton
   const animationProgress = useRef(new Animated.Value(0)).current;
   const [simulatedKps, setSimulatedKps] = useState<Record<string, [number, number]>>({});
+  const [keypoints, setKeypoints] = useState<Keypoint[]>([]);
+  const [jointScores, setJointScores] = useState<Record<string, number>>({});
 
   const restTimerRef = useRef<any>(null);
+  const countdownTimerRef = useRef<any>(null);
+  const frameTimerRef = useRef<any>(null);
 
-  // Initialize and run the simulation loop
+  // Rep tracking state machine helper refs
+  const repPhase = useRef<"up" | "down">("up");
+  const lastAngle = useRef(0);
+
+  // Simulated setup loading
   useEffect(() => {
-    if (isPaused || isResting) {
-      animationProgress.stopAnimation();
-      return;
+    const loadTimer = setTimeout(() => {
+      setPhase("get_in_position");
+    }, 1500);
+
+    return () => {
+      clearTimeout(loadTimer);
+      if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
+      if (restTimerRef.current) clearInterval(restTimerRef.current);
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (frameTimerRef.current) cancelAnimationFrame(frameTimerRef.current);
+    };
+  }, []);
+
+  const getTip = (jointName: string): string => {
+    const tips: Record<string, string> = {
+      left_knee:     "Bend your left knee more",
+      right_knee:    "Bend your right knee more",
+      left_elbow:    "Straighten your left arm",
+      right_elbow:   "Straighten your right arm",
+      left_hip:      "Keep your hips level",
+      right_hip:     "Keep your hips level",
+      left_shoulder: "Open your left shoulder",
+      right_shoulder:"Open your right shoulder",
+    };
+    return tips[jointName] ?? "Adjust your form";
+  };
+
+  function processResult(result: { keypoints: Keypoint[]; score: number }) {
+    const kps = result.keypoints;
+    setKeypoints(kps);
+    
+    // Always calculate and show form score regardless of phase
+    const scores: Record<string, number> = {};
+    let total = 0;
+    let count = 0;
+    
+    for (const [joint, target] of Object.entries(exercise.referenceAngles)) {
+      const score = scoreJoint(kps, joint, target);
+      scores[joint] = score;
+      total += score;
+      count++;
     }
-
-    // Set up continuous loop: 0 (standing/start) -> 1 (flexion/mid-rep) -> 0 (finish rep)
-    const runRepAnimation = () => {
-      Animated.sequence([
-        Animated.timing(animationProgress, {
-          toValue: 1,
-          duration: 1800,
-          useNativeDriver: false,
-        }),
-        Animated.timing(animationProgress, {
-          toValue: 0,
-          duration: 1500,
-          useNativeDriver: false,
-        }),
-      ]).start((result) => {
-        if (result.finished && !isPaused && !isResting) {
-          // Increment rep
-          setRepCount((prev) => {
-            const next = prev + 1;
-            Vibration.vibrate(60);
-            if (next >= exercise.reps) {
-              // Finish set after a tiny delay
-              setTimeout(() => {
-                handleSetComplete();
-              }, 500);
-              return 0;
-            }
-            return next;
-          });
-          runRepAnimation();
-        }
-      });
-    };
-
-    runRepAnimation();
-
-    return () => {
-      animationProgress.stopAnimation();
-    };
-  }, [isPaused, isResting, currentSet]);
-
-  // Listener to compute simulated joint coordinates based on animation value
-  useEffect(() => {
-    const listenerId = animationProgress.addListener(({ value }) => {
-      const isSquat = exercise.id.includes("squat") || exercise.id.includes("lunge");
-      const isPushup = exercise.id.includes("push") || exercise.id.includes("dip");
-
-      // Baseline standing/straight post keypoints relative to CAM_W and CAM_H
-      const base: Record<string, [number, number]> = {
-        left_shoulder:   [0.36, 0.22],
-        right_shoulder:  [0.64, 0.22],
-        left_elbow:      [0.26, 0.38],
-        right_elbow:     [0.74, 0.38],
-        left_wrist:      [0.18, 0.54],
-        right_wrist:     [0.82, 0.54],
-        left_hip:        [0.38, 0.50],
-        right_hip:       [0.62, 0.50],
-        left_knee:       [0.36, 0.70],
-        right_knee:      [0.64, 0.70],
-        left_ankle:      [0.34, 0.88],
-        right_ankle:     [0.66, 0.88],
-      };
-
-      if (isSquat) {
-        // Lower hips, bend knees outwards, keep feet fixed
-        const hipDrop = value * 0.15; // lower hips by 15% height
-        const kneeOut = value * 0.05;  // push knees out by 5% width
-
-        base.left_hip = [base.left_hip[0] - kneeOut, base.left_hip[1] + hipDrop];
-        base.right_hip = [base.right_hip[0] + kneeOut, base.right_hip[1] + hipDrop];
-
-        base.left_knee = [base.left_knee[0] - kneeOut * 1.5, base.left_knee[1] + hipDrop * 0.5];
-        base.right_knee = [base.right_knee[0] + kneeOut * 1.5, base.right_knee[1] + hipDrop * 0.5];
-
-        // Minor chest lean
-        base.left_shoulder = [base.left_shoulder[0] - 0.01 * value, base.left_shoulder[1] + hipDrop * 0.8];
-        base.right_shoulder = [base.right_shoulder[0] + 0.01 * value, base.right_shoulder[1] + hipDrop * 0.8];
-        
-        // Randomize form score slightly around 85-95%
-        setFormScore(Math.round(88 + Math.sin(value * Math.PI) * 7));
-        setTip(value > 0.6 ? "Excellent depth! Hold it." : "Keep chest up and knees out");
-      } else if (isPushup) {
-        // Keep body line straight, bend elbows outwards, wrist and feet fixed
-        const drop = value * 0.12; // move shoulders/chest down
-        const elbowBend = value * 0.08; // bend elbows out
-
-        base.left_shoulder = [base.left_shoulder[0], base.left_shoulder[1] + drop];
-        base.right_shoulder = [base.right_shoulder[0], base.right_shoulder[1] + drop];
-        
-        base.left_elbow = [base.left_elbow[0] - elbowBend, base.left_elbow[1] + drop * 0.5];
-        base.right_elbow = [base.right_elbow[0] + elbowBend, base.right_elbow[1] + drop * 0.5];
-
-        base.left_hip = [base.left_hip[0], base.left_hip[1] + drop * 0.8];
-        base.right_hip = [base.right_hip[0], base.right_hip[1] + drop * 0.8];
-
-        base.left_knee = [base.left_knee[0], base.left_knee[1] + drop * 0.5];
-        base.right_knee = [base.right_knee[0], base.right_knee[1] + drop * 0.5];
-
-        setFormScore(Math.round(84 + Math.sin(value * Math.PI) * 9));
-        setTip(value > 0.6 ? "Lower all the way! Great." : "Keep body straight, core tight");
-      } else {
-        // Plank/other hold: simple minor breathing/shaking motion
-        const shake = (Math.random() - 0.5) * 0.005;
-        base.left_hip = [base.left_hip[0], base.left_hip[1] + shake];
-        base.right_hip = [base.right_hip[0], base.right_hip[1] + shake];
-        setFormScore(Math.round(92 + Math.sin(Date.now() / 200) * 3));
-        setTip("Maintain rigid flat posture");
+    
+    setJointScores(scores);
+    const overall = count > 0 ? Math.round(total / count) : 0;
+    setFormScore(overall);
+    
+    // Generate form tip
+    const worst = Object.entries(scores).sort((a, b) => a[1] - b[1])[0];
+    if (worst && worst[1] < 60) {
+      setTip(getTip(worst[0]));
+    } else {
+      setTip("");
+    }
+    
+    // PHASE LOGIC
+    if (phase === "get_in_position" || phase === "detecting_ready") {
+      if (phase === "get_in_position") {
+        setPhase("detecting_ready");
       }
+      
+      const ready = isInStartingPosition(kps, exercise);
+      
+      if (ready) {
+        positionHeldFrames.current++;
+        setPositionReady(true);
+        
+        // Start countdown once held long enough
+        if (positionHeldFrames.current >= POSITION_HOLD_FRAMES) {
+          positionHeldFrames.current = 0;
+          startCountdown();
+        }
+      } else {
+        positionHeldFrames.current = 0;
+        setPositionReady(false);
+      }
+      return; // Don't count reps yet
+    }
+    
+    if (phase === "exercising") {
+      countRep(kps);
+    }
+  }
 
-      setSimulatedKps(base);
-    });
+  function startCountdown() {
+    setPhase("countdown");
+    setCountdown(3);
+    
+    let count = 3;
+    if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
+    countdownTimerRef.current = setInterval(() => {
+      count--;
+      setCountdown(count);
+      
+      if (count <= 0) {
+        clearInterval(countdownTimerRef.current);
+        countdownTimerRef.current = null;
+        Vibration.vibrate(200);
+        setPhase("exercising");
+      }
+    }, 1000);
+  }
 
-    return () => {
-      animationProgress.removeListener(listenerId);
-    };
-  }, [exercise, animationProgress]);
+  const countRep = (kps: Keypoint[]) => {
+    let angle = 180;
+    
+    const isSquat = exercise.id.includes("squat") || exercise.id.includes("baithak") || exercise.id.includes("lunge") || exercise.id.includes("virabhadrasana") || exercise.id.includes("uth_baith");
+    const isPushup = exercise.id.includes("push") || exercise.id.includes("dand") || exercise.id.includes("chaturanga") || exercise.id.includes("dip");
+
+    if (isSquat) {
+      if (kps[13] && kps[11] && kps[15]) {
+        angle = calculateAngle(kps[11], kps[13], kps[15]);
+      }
+    } else if (isPushup) {
+      if (kps[5] && kps[7] && kps[9]) {
+        angle = calculateAngle(kps[5], kps[7], kps[9]);
+      }
+    }
+    
+    // State machine: detect down then up = 1 rep
+    if (repPhase.current === "up" && angle < 110) {
+      repPhase.current = "down";
+    } else if (repPhase.current === "down" && angle > 155) {
+      repPhase.current = "up";
+      setRepCount((prev) => {
+        const next = prev + 1;
+        Vibration.vibrate(50);
+        if (next >= exercise.reps) {
+          setTimeout(() => {
+            handleSetComplete();
+          }, 500);
+          return 0;
+        }
+        return next;
+      });
+    }
+    
+    lastAngle.current = angle;
+  };
 
   const handleSetComplete = () => {
     Vibration.vibrate([0, 100, 50, 100]);
@@ -180,7 +343,7 @@ export default function PoseCheckScreen() {
     setRepCount(0);
 
     if (currentSet >= exercise.sets) {
-      // Complete workout session
+      setPhase("complete");
       navigation.replace("WorkoutResult", {
         exercise,
         setsCompleted: currentSet,
@@ -191,27 +354,213 @@ export default function PoseCheckScreen() {
         durationSec: exercise.durationSec * exercise.sets,
       });
     } else {
-      // Enter resting state
-      setIsResting(true);
-      setRestSeconds(10); // 10 seconds rest for fast dev/user experience
+      setPhase("resting");
+      setRestSeconds(15); // Fast dev rest cycle, standard is 15s or 60s
       setCurrentSet((s) => s + 1);
 
       if (restTimerRef.current) clearInterval(restTimerRef.current);
       restTimerRef.current = setInterval(() => {
         setRestSeconds((s) => {
           if (s <= 1) {
-            if (restTimerRef.current) {
-              clearInterval(restTimerRef.current);
-              restTimerRef.current = null;
-            }
-            setIsResting(false);
-            return 10;
+            clearInterval(restTimerRef.current);
+            restTimerRef.current = null;
+            startCountdown();
+            return 15;
           }
           return s - 1;
         });
       }, 1000);
     }
   };
+
+  const mapSimulatedToKeypoints = (simKps: Record<string, [number, number]>): Keypoint[] => {
+    const kpsList: Keypoint[] = Array(17).fill(null).map((_, i) => ({
+      name: KEYPOINT_NAMES[i],
+      x: 0,
+      y: 0,
+      score: 0
+    }));
+
+    const keypointMapping: Record<string, number> = {
+      nose: 0,
+      left_eye: 1, right_eye: 2,
+      left_ear: 3, right_ear: 4,
+      left_shoulder: 5, right_shoulder: 6,
+      left_elbow: 7, right_elbow: 8,
+      left_wrist: 9, right_wrist: 10,
+      left_hip: 11, right_hip: 12,
+      left_knee: 13, right_knee: 14,
+      left_ankle: 15, right_ankle: 16
+    };
+
+    for (const [name, val] of Object.entries(simKps)) {
+      const idx = keypointMapping[name];
+      if (idx !== undefined) {
+        kpsList[idx] = {
+          name,
+          x: val[0] * CAM_W,
+          y: val[1] * CAM_H,
+          score: 0.9 // high confidence
+        };
+      }
+    }
+
+    return kpsList;
+  };
+
+  const computeSimulatedJoints = (value: number): Record<string, [number, number]> => {
+    const isSquat = exercise.id.includes("squat") || exercise.id.includes("baithak") || exercise.id.includes("lunge") || exercise.id.includes("virabhadrasana") || exercise.id.includes("uth_baith");
+    const isPushup = exercise.id.includes("push") || exercise.id.includes("dand") || exercise.id.includes("chaturanga") || exercise.id.includes("dip");
+
+    const base: Record<string, [number, number]> = {
+      left_shoulder:   [0.36, 0.22],
+      right_shoulder:  [0.64, 0.22],
+      left_elbow:      [0.26, 0.38],
+      right_elbow:     [0.74, 0.38],
+      left_wrist:      [0.18, 0.54],
+      right_wrist:     [0.82, 0.54],
+      left_hip:        [0.38, 0.50],
+      right_hip:       [0.62, 0.50],
+      left_knee:       [0.36, 0.70],
+      right_knee:      [0.64, 0.70],
+      left_ankle:      [0.34, 0.88],
+      right_ankle:     [0.66, 0.88],
+    };
+
+    if (isSquat) {
+      const hipDrop = value * 0.15;
+      const kneeOut = value * 0.05;
+
+      base.left_hip = [base.left_hip[0] - kneeOut, base.left_hip[1] + hipDrop];
+      base.right_hip = [base.right_hip[0] + kneeOut, base.right_hip[1] + hipDrop];
+
+      base.left_knee = [base.left_knee[0] - kneeOut * 1.5, base.left_knee[1] + hipDrop * 0.5];
+      base.right_knee = [base.right_knee[0] + kneeOut * 1.5, base.right_knee[1] + hipDrop * 0.5];
+
+      base.left_shoulder = [base.left_shoulder[0] - 0.01 * value, base.left_shoulder[1] + hipDrop * 0.8];
+      base.right_shoulder = [base.right_shoulder[0] + 0.01 * value, base.right_shoulder[1] + hipDrop * 0.8];
+    } else if (isPushup) {
+      const drop = value * 0.12;
+      const elbowBend = value * 0.08;
+
+      base.left_shoulder = [base.left_shoulder[0], base.left_shoulder[1] + drop];
+      base.right_shoulder = [base.right_shoulder[0], base.right_shoulder[1] + drop];
+      
+      base.left_elbow = [base.left_elbow[0] - elbowBend, base.left_elbow[1] + drop * 0.5];
+      base.right_elbow = [base.right_elbow[0] + elbowBend, base.right_elbow[1] + drop * 0.5];
+
+      base.left_hip = [base.left_hip[0], base.left_hip[1] + drop * 0.8];
+      base.right_hip = [base.right_hip[0], base.right_hip[1] + drop * 0.8];
+
+      base.left_knee = [base.left_knee[0], base.left_knee[1] + drop * 0.5];
+      base.right_knee = [base.right_knee[0], base.right_knee[1] + drop * 0.5];
+    } else {
+      const shake = (Math.random() - 0.5) * 0.005;
+      base.left_hip = [base.left_hip[0], base.left_hip[1] + shake];
+      base.right_hip = [base.right_hip[0], base.right_hip[1] + shake];
+    }
+
+    return base;
+  };
+
+  // Keep starting skeleton updated on frames when not in exercising phase
+  useEffect(() => {
+    const loop = () => {
+      if (phase !== "exercising" && phase !== "resting" && phase !== "complete") {
+        const base = computeSimulatedJoints(0);
+        setSimulatedKps(base);
+        const kps = mapSimulatedToKeypoints(base);
+        processResult({ keypoints: kps, score: 0.9 });
+      }
+
+      frameTimerRef.current = requestAnimationFrame(loop);
+    };
+
+    frameTimerRef.current = requestAnimationFrame(loop);
+
+    return () => {
+      if (frameTimerRef.current) {
+        cancelAnimationFrame(frameTimerRef.current);
+      }
+    };
+  }, [phase]);
+
+  // Listener to compute simulated joint coordinates based on animation value
+  useEffect(() => {
+    const listenerId = animationProgress.addListener(({ value }) => {
+      if (phase !== "exercising") return;
+
+      const base = computeSimulatedJoints(value);
+      setSimulatedKps(base);
+
+      const kps = mapSimulatedToKeypoints(base);
+      processResult({ keypoints: kps, score: 0.9 });
+    });
+
+    return () => {
+      animationProgress.removeListener(listenerId);
+    };
+  }, [exercise, animationProgress, phase]);
+
+  // Initialize and run the exercising loop (time-based vs rep-based)
+  useEffect(() => {
+    if (phase !== "exercising" || isPaused) {
+      animationProgress.stopAnimation();
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      return;
+    }
+
+    if (exercise.isTimeBased) {
+      setTimerSeconds(exercise.durationSec);
+      if (timerRef.current) clearInterval(timerRef.current);
+      timerRef.current = setInterval(() => {
+        setTimerSeconds((prev) => {
+          if (prev <= 1) {
+            clearInterval(timerRef.current);
+            timerRef.current = null;
+            handleSetComplete();
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+
+      return () => {
+        if (timerRef.current) {
+          clearInterval(timerRef.current);
+          timerRef.current = null;
+        }
+      };
+    } else {
+      const runRepAnimation = () => {
+        Animated.sequence([
+          Animated.timing(animationProgress, {
+            toValue: 1,
+            duration: 1800,
+            useNativeDriver: false,
+          }),
+          Animated.timing(animationProgress, {
+            toValue: 0,
+            duration: 1500,
+            useNativeDriver: false,
+          }),
+        ]).start((result) => {
+          if (result.finished && phase === "exercising" && !isPaused) {
+            runRepAnimation();
+          }
+        });
+      };
+
+      runRepAnimation();
+
+      return () => {
+        animationProgress.stopAnimation();
+      };
+    }
+  }, [phase, isPaused, currentSet]);
 
   if (!permission) {
     return (
@@ -234,6 +583,17 @@ export default function PoseCheckScreen() {
         <TouchableOpacity style={styles.btnSecondary} onPress={() => navigation.goBack()}>
           <Text style={styles.btnSecondaryText}>Go Back</Text>
         </TouchableOpacity>
+      </View>
+    );
+  }
+
+  if (phase === "loading") {
+    return (
+      <View style={styles.center}>
+        <Text style={styles.loadingText}>Loading AI model...</Text>
+        <Text style={styles.loadingSubtext}>
+          Setting up pose tracking and calibrations. This takes a few moments.
+        </Text>
       </View>
     );
   }
@@ -261,9 +621,9 @@ export default function PoseCheckScreen() {
         </View>
         <View style={styles.stat}>
           <Text style={styles.statNumber}>
-            {repCount}/{exercise.reps}
+            {exercise.isTimeBased ? `${timerSeconds}s` : `${repCount}/${exercise.reps}`}
           </Text>
-          <Text style={styles.statLabel}>Reps</Text>
+          <Text style={styles.statLabel}>{exercise.isTimeBased ? "Timer" : "Reps"}</Text>
         </View>
         <View style={styles.stat}>
           <Text style={styles.statNumber}>
@@ -275,7 +635,7 @@ export default function PoseCheckScreen() {
 
       {/* Tip Banner */}
       <View style={styles.tipBar}>
-        <Text style={styles.tipText}>💡 {tip}</Text>
+        <Text style={styles.tipText}>💡 {tip || "Position yourself in front of the camera"}</Text>
       </View>
 
       {/* Camera Live Stream & Animated Skeleton */}
@@ -324,6 +684,53 @@ export default function PoseCheckScreen() {
           </Svg>
         )}
 
+        {/* GET IN POSITION OVERLAY */}
+        {(phase === "get_in_position" || phase === "detecting_ready") && (
+          <View style={styles.positionOverlay}>
+            <Text style={styles.positionTitle}>Get in position</Text>
+            <Text style={styles.positionInstruction}>{exercise.description}</Text>
+            
+            <View style={[
+              styles.positionIndicator,
+              positionReady 
+                ? styles.positionIndicatorReady
+                : styles.positionIndicatorWaiting
+            ]}>
+              <Text style={styles.positionIndicatorText}>
+                {positionReady 
+                  ? "✓ Hold position..." 
+                  : "• Waiting for start position"}
+              </Text>
+            </View>
+            
+            <View style={styles.holdProgressBar}>
+              <View style={[
+                styles.holdProgressFill,
+                { 
+                  width: `${Math.min(100, (positionHeldFrames.current / POSITION_HOLD_FRAMES) * 100)}%`,
+                  backgroundColor: positionReady ? "#1D9E75" : "#E5E7EB"
+                }
+              ]}/>
+            </View>
+            
+            <Text style={styles.positionHint}>
+              Stand in front of the camera so your full body is visible
+            </Text>
+          </View>
+        )}
+
+        {/* COUNTDOWN OVERLAY */}
+        {phase === "countdown" && (
+          <View style={styles.countdownOverlay}>
+            <Text style={styles.countdownNumber}>
+              {countdown === 0 ? "GO!" : countdown}
+            </Text>
+            <Text style={styles.countdownLabel}>
+              {countdown === 0 ? "Start exercising!" : "Get ready..."}
+            </Text>
+          </View>
+        )}
+
         {/* Pause Overlay */}
         {isPaused && (
           <View style={styles.pauseOverlay}>
@@ -332,14 +739,18 @@ export default function PoseCheckScreen() {
         )}
 
         {/* Rest Overlay */}
-        {isResting && (
+        {phase === "resting" && (
           <View style={styles.restOverlay}>
             <Text style={styles.restTitle}>Rest Intermission</Text>
             <Text style={styles.restTimer}>{restSeconds}s</Text>
             <Text style={styles.restSubtitle}>
               Next: Set {currentSet} of {exercise.sets}
             </Text>
-            <TouchableOpacity style={styles.skipRest} onPress={() => setIsResting(false)}>
+            <TouchableOpacity style={styles.skipRest} onPress={() => {
+              if (restTimerRef.current) clearInterval(restTimerRef.current);
+              restTimerRef.current = null;
+              startCountdown();
+            }}>
               <Text style={styles.skipRestText}>Skip Rest</Text>
             </TouchableOpacity>
           </View>
@@ -348,12 +759,16 @@ export default function PoseCheckScreen() {
 
       {/* Control Buttons */}
       <View style={styles.controls}>
-        <TouchableOpacity style={styles.controlBtn} onPress={() => setIsPaused((p) => !p)}>
-          <Text style={styles.controlText}>{isPaused ? "▶ Resume" : "⏸ Pause"}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.controlBtn} onPress={handleSetComplete}>
-          <Text style={styles.controlText}>⏭ Skip Set</Text>
-        </TouchableOpacity>
+        {phase === "exercising" && (
+          <>
+            <TouchableOpacity style={styles.controlBtn} onPress={() => setIsPaused((p) => !p)}>
+              <Text style={styles.controlText}>{isPaused ? "▶ Resume" : "⏸ Pause"}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.controlBtn} onPress={handleSetComplete}>
+              <Text style={styles.controlText}>⏭ Skip Set</Text>
+            </TouchableOpacity>
+          </>
+        )}
         <TouchableOpacity style={[styles.controlBtn, styles.exitBtn]} onPress={() => navigation.goBack()}>
           <Text style={[styles.controlText, { color: "#E24B4A" }]}>✗ Exit</Text>
         </TouchableOpacity>
@@ -375,7 +790,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#0A0A0A",
   },
   referenceSection: {
-    height: SCREEN_H * 0.26,
+    height: SCREEN_H * 0.22,
     backgroundColor: "#141414",
     borderBottomWidth: 1,
     borderBottomColor: "#222222",
@@ -434,7 +849,7 @@ const styles = StyleSheet.create({
   },
   controls: {
     flexDirection: "row",
-    backgroundColor: "#111111",
+    backgroundColor: "#111",
     paddingVertical: 16,
     paddingHorizontal: 16,
     gap: 8,
@@ -460,7 +875,11 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   pauseOverlay: {
-    ...StyleSheet.absoluteFill,
+    position: "absolute",
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
     backgroundColor: "rgba(0,0,0,0.75)",
     justifyContent: "center",
     alignItems: "center",
@@ -473,7 +892,11 @@ const styles = StyleSheet.create({
     letterSpacing: 1.5,
   },
   restOverlay: {
-    ...StyleSheet.absoluteFill,
+    position: "absolute",
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
     backgroundColor: "rgba(10,10,10,0.9)",
     justifyContent: "center",
     alignItems: "center",
@@ -548,5 +971,95 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontSize: 16,
     fontWeight: "600",
+  },
+  loadingSubtext: {
+    color: "#9CA3AF",
+    fontSize: 13,
+    textAlign: "center",
+    lineHeight: 20,
+    marginTop: 12,
+  },
+  
+  // Phase Overlay styles
+  positionOverlay: {
+    position: "absolute",
+    bottom: 0, left: 0, right: 0,
+    backgroundColor: "rgba(0,0,0,0.85)",
+    padding: 24,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+  },
+  positionTitle: {
+    color: "#fff",
+    fontSize: 20,
+    fontWeight: "600",
+    textAlign: "center",
+    marginBottom: 8,
+  },
+  positionInstruction: {
+    color: "#ccc",
+    fontSize: 13,
+    textAlign: "center",
+    lineHeight: 20,
+    marginBottom: 16,
+  },
+  positionIndicator: {
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  positionIndicatorReady: {
+    backgroundColor: "#1D9E7530",
+    borderWidth: 1,
+    borderColor: "#1D9E75",
+  },
+  positionIndicatorWaiting: {
+    backgroundColor: "#ffffff10",
+    borderWidth: 1,
+    borderColor: "#666",
+  },
+  positionIndicatorText: {
+    color: "#fff",
+    fontSize: 15,
+    fontWeight: "500",
+  },
+  holdProgressBar: {
+    height: 6,
+    backgroundColor: "#333",
+    borderRadius: 3,
+    marginBottom: 12,
+    overflow: "hidden",
+  },
+  holdProgressFill: {
+    height: 6,
+    borderRadius: 3,
+  },
+  positionHint: {
+    color: "#888",
+    fontSize: 12,
+    textAlign: "center",
+  },
+  countdownOverlay: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0,0,0,0.8)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  countdownNumber: {
+    color: "#1D9E75",
+    fontSize: 96,
+    fontWeight: "700",
+    lineHeight: 96,
+  },
+  countdownLabel: {
+    color: "#fff",
+    fontSize: 18,
+    marginTop: 16,
   },
 });
