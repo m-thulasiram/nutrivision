@@ -6,6 +6,10 @@ os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
+# Disable Ultralytics YOLO telemetry/analytics and force offline mode to prevent network socket blocks
+os.environ["ULTRALYTICS_ANALYTICS"] = "false"
+os.environ["ULTRALYTICS_OFFLINE"] = "true"
+
 # Monkeypatch ONNX Runtime to force single-threaded execution globally
 try:
     import onnxruntime as ort
