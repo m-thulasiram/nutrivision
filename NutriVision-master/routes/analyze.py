@@ -1,5 +1,6 @@
 import time
 import io
+import gc
 import math
 import base64
 import difflib
@@ -89,8 +90,22 @@ def process_pil_image(pil_image: Image.Image, user_id: int, db: sqlite3.Connecti
             logger.warning("YOLO no DB match", extra={"predicted_label": predicted_label})
             return None
 
+        # Free any lingering memory before heavy inference
+        gc.collect()
+
         yolo_start = time.time()
-        results = yolo_model(pil_image)
+        # torch.no_grad() prevents gradient tracking — halves RAM during inference
+        try:
+            import torch
+            with torch.no_grad():
+                results = yolo_model(pil_image)
+        except ImportError:
+            results = yolo_model(pil_image)
+
+        # Free PIL image from memory immediately after inference
+        del pil_image
+        gc.collect()
+
         yolo_duration = time.time() - yolo_start
         yolo_inference_latency.observe(yolo_duration)
 
