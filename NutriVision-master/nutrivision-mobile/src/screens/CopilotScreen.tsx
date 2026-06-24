@@ -343,96 +343,98 @@ export default function CopilotScreen() {
           content: m.content,
         }));
       
-      let fullText = "";
-      let seenBytes = 0;
-      let buffer = "";
-      
-      const xhr = new XMLHttpRequest();
-      xhr.open("POST", `${API_BASE}/api/copilot/chat`);
-      xhr.setRequestHeader("Content-Type", "application/json");
-      if (token) {
-        xhr.setRequestHeader("Authorization", `Bearer ${token}`);
-      }
-      
-      xhr.onreadystatechange = () => {
-        if (xhr.readyState === 3 || xhr.readyState === 4) {
-          const newText = xhr.responseText.slice(seenBytes);
-          seenBytes = xhr.responseText.length;
-          buffer += newText;
-          
-          let lineIndex = buffer.indexOf("\n");
-          while (lineIndex !== -1) {
-            const line = buffer.slice(0, lineIndex).trim();
-            buffer = buffer.slice(lineIndex + 1);
-            
-            if (line.startsWith("data: ")) {
-              try {
-                const data = JSON.parse(line.slice(6));
-                if (data.done) {
-                  // Done stream received
-                } else if (data.text) {
-                  fullText += data.text;
-                  setMessages(prev => prev.map(m =>
-                    m.id === assistantMsgId
-                      ? { ...m, content: fullText }
-                      : m
-                  ));
-                }
-              } catch (e) {
-                // Ignore incomplete JSON lines
-              }
-            }
-            lineIndex = buffer.indexOf("\n");
-          }
+      await new Promise<void>((resolve, reject) => {
+        let fullText = "";
+        let seenBytes = 0;
+        let buffer = "";
+        
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", `${API_BASE}/api/copilot/chat`);
+        xhr.setRequestHeader("Content-Type", "application/json");
+        if (token) {
+          xhr.setRequestHeader("Authorization", `Bearer ${token}`);
         }
         
-        if (xhr.readyState === 4) {
-          setIsLoading(false);
-          if (xhr.status >= 200 && xhr.status < 300) {
-            const parsed = parseResponse(fullText);
-            setMessages(prev => prev.map(m =>
-              m.id === assistantMsgId ? {
-                ...m,
-                content: parsed.text,
-                foodCard: parsed.foodCard,
-                logMeal: parsed.logMeal,
-                isStreaming: false,
-              } : m
-            ));
-          } else {
-            setMessages(prev => prev.map(m =>
-              m.id === assistantMsgId ? {
-                ...m,
-                content: "Sorry, I couldn't connect to the AI service. Please check your network and try again.",
-                isStreaming: false,
-              } : m
-            ));
+        xhr.onreadystatechange = () => {
+          if (xhr.readyState === 3 || xhr.readyState === 4) {
+            const newText = xhr.responseText.slice(seenBytes);
+            seenBytes = xhr.responseText.length;
+            buffer += newText;
+            
+            let lineIndex = buffer.indexOf("\n");
+            while (lineIndex !== -1) {
+              const line = buffer.slice(0, lineIndex).trim();
+              buffer = buffer.slice(lineIndex + 1);
+              
+              if (line.startsWith("data: ")) {
+                try {
+                  const data = JSON.parse(line.slice(6));
+                  if (data.done) {
+                    // Done stream received
+                  } else if (data.text) {
+                    fullText += data.text;
+                    setMessages(prev => prev.map(m =>
+                      m.id === assistantMsgId
+                        ? { ...m, content: fullText }
+                        : m
+                    ));
+                  }
+                } catch (e) {
+                  // Ignore incomplete JSON lines
+                }
+              }
+              lineIndex = buffer.indexOf("\n");
+            }
           }
-        }
-      };
+          
+          if (xhr.readyState === 4) {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              const parsed = parseResponse(fullText);
+              setMessages(prev => prev.map(m =>
+                m.id === assistantMsgId ? {
+                  ...m,
+                  content: parsed.text,
+                  foodCard: parsed.foodCard,
+                  logMeal: parsed.logMeal,
+                  isStreaming: false,
+                } : m
+              ));
+              resolve();
+            } else {
+              reject(new Error(`HTTP error ${xhr.status}`));
+            }
+          }
+        };
+        
+        xhr.onerror = () => {
+          reject(new Error("network error"));
+        };
+        
+        xhr.send(JSON.stringify({
+          message: text.trim(),
+          conversation_history: history,
+        }));
+      });
       
-      xhr.onerror = () => {
-        setIsLoading(false);
-        setMessages(prev => prev.map(m =>
-          m.id === assistantMsgId ? {
-            ...m,
-            content: "Network connection error. Please try again.",
-            isStreaming: false,
-          } : m
-        ));
-      };
-      
-      xhr.send(JSON.stringify({
-        message: text.trim(),
-        conversation_history: history,
-      }));
-      
-    } catch (error) {
+    } catch (error: any) {
       setIsLoading(false);
+      let errorMsg = "Could not connect to AI service.";
+      
+      if (error.message?.includes("401")) {
+        errorMsg = "Authentication failed. Please sign out and sign in again.";
+      } else if (error.message?.includes("500")) {
+        errorMsg = "AI service error. Check that your API key is set.";
+      } else if (
+        error.message?.includes("network") ||
+        error.message?.includes("fetch")
+      ) {
+        errorMsg = "Network error. Check that backend is running on port 8000.";
+      }
+      
       setMessages(prev => prev.map(m =>
         m.id === assistantMsgId ? {
           ...m,
-          content: "Sorry, an unexpected error occurred. Please try again.",
+          content: errorMsg,
           isStreaming: false,
         } : m
       ));

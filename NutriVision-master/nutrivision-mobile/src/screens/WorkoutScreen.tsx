@@ -21,7 +21,7 @@ const SCREEN_WIDTH = Dimensions.get("window").width;
 interface PlanExercise {
   name: string;
   sets: number;
-  reps: number;
+  reps: number | string;
   rest_seconds: number;
 }
 
@@ -64,6 +64,7 @@ export default function WorkoutScreen() {
   const [plan, setPlan] = useState<PlanDay[] | null>(null);
   const [planLoading, setPlanLoading] = useState(false);
   const [equipment, setEquipment] = useState("bodyweight");
+  const [userGoal, setUserGoal] = useState("maintain");
   const [generating, setGenerating] = useState(false);
 
   // Manual logs history state
@@ -94,15 +95,33 @@ export default function WorkoutScreen() {
   const [logSubmitting, setLogSubmitting] = useState(false);
   const [logSuccess, setLogSuccess] = useState("");
 
-  const fetchPlan = useCallback(async () => {
+  // Load user's profile goal on mount
+  useEffect(() => {
+    async function loadProfile() {
+      try {
+        const data = await apiCall<{
+          status: string;
+          user: { goal: string };
+        }>("/api/auth/me", "GET", undefined, true);
+        if (data.status === "success" && data.user?.goal) {
+          setUserGoal(data.user.goal);
+        }
+      } catch {
+        // silent
+      }
+    }
+    loadProfile();
+  }, []);
+
+  const fetchWorkoutPlan = useCallback(async (eq: string, goal: string) => {
     setPlanLoading(true);
     try {
       const data = await apiCall<{
         status: string;
-        plan: { plan_json: string } | null;
-      }>("/api/workouts/plans", "GET", undefined, true);
-      if (data.status === "success" && data.plan?.plan_json) {
-        setPlan(JSON.parse(data.plan.plan_json));
+        plan: PlanDay[] | null;
+      }>(`/api/workouts/plan?equipment=${eq}&goal=${goal}`, "GET", undefined, true);
+      if (data.status === "success" && data.plan) {
+        setPlan(data.plan);
       }
     } catch {
       // silent
@@ -130,9 +149,10 @@ export default function WorkoutScreen() {
     }
   }, []);
 
+  // Re-fetch the plan automatically when equipment or goal changes
   useEffect(() => {
-    fetchPlan();
-  }, [fetchPlan]);
+    fetchWorkoutPlan(equipment, userGoal);
+  }, [equipment, userGoal, fetchWorkoutPlan]);
 
   useEffect(() => {
     if (tab === "history") {
@@ -143,13 +163,7 @@ export default function WorkoutScreen() {
   const handleGenerate = async () => {
     setGenerating(true);
     try {
-      const data = await apiCall<{
-        status: string;
-        plan: { plan_json: string };
-      }>("/api/workouts/plans", "POST", { equipment }, true);
-      if (data.status === "success" && data.plan?.plan_json) {
-        setPlan(JSON.parse(data.plan.plan_json));
-      }
+      await fetchWorkoutPlan(equipment, userGoal);
     } catch {
       // silent
     } finally {
@@ -162,7 +176,7 @@ export default function WorkoutScreen() {
     setInlineLoggingId(exercise.name);
 
     const setsVal = parseInt(inlineSets) || exercise.sets;
-    const repsVal = parseInt(inlineReps) || exercise.reps;
+    const repsVal = parseInt(inlineReps) || (typeof exercise.reps === "number" ? exercise.reps : parseInt(exercise.reps) || 10);
     const weightVal = parseFloat(inlineWeight) || 0;
     const durationVal = parseInt(inlineDuration) || 30;
 
@@ -390,7 +404,7 @@ export default function WorkoutScreen() {
                                 const exerciseConfig = getExerciseConfig(
                                   ex.name,
                                   ex.sets,
-                                  ex.reps
+                                  typeof ex.reps === "number" ? ex.reps : parseInt(ex.reps) || 10
                                 );
                                 navigation.navigate("PoseCheck", {
                                   exercise: exerciseConfig,

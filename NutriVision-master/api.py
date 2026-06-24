@@ -107,6 +107,7 @@ app.add_api_route("/metrics", metrics_handler, include_in_schema=False)
 
 # Health endpoint
 @app.get("/health")
+@app.get("/api/health")
 def health():
     try:
         from database import get_connection, close_connection
@@ -133,6 +134,7 @@ def health():
         media_type="application/json",
         status_code=status_code
     )
+
 
 
 # Include route modules

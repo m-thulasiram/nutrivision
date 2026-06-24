@@ -1,3 +1,4 @@
+import os
 import json
 from datetime import datetime, timedelta
 from fastapi import APIRouter, HTTPException, Depends, Query
@@ -112,45 +113,548 @@ def _ensure_workout_tables():
 
 _ensure_workout_tables()
 
+# Static Workout Plans Database
+PLANS_DB = {
+    # ─── BODYWEIGHT PLANS ─────────────────────────────────────────────────────
+    ("bodyweight", "muscle_gain"): [
+        {
+            "day": "Monday",
+            "focus": "chest",
+            "exercises": [
+                {"name": "Dand (Push-up)", "sets": 4, "reps": "10-12", "rest_seconds": 60},
+                {"name": "Wide Dand", "sets": 3, "reps": "12", "rest_seconds": 60},
+                {"name": "Diamond Dand", "sets": 3, "reps": "10", "rest_seconds": 60},
+                {"name": "Chaturanga Dip", "sets": 3, "reps": "12", "rest_seconds": 60},
+            ]
+        },
+        {
+            "day": "Tuesday",
+            "focus": "back",
+            "exercises": [
+                {"name": "Pull-ups", "sets": 4, "reps": "8", "rest_seconds": 60},
+                {"name": "Inverted Row", "sets": 3, "reps": "10", "rest_seconds": 60},
+                {"name": "Superman Hold", "sets": 3, "reps": "12", "rest_seconds": 60},
+                {"name": "Chin-ups", "sets": 3, "reps": "8", "rest_seconds": 60},
+            ]
+        },
+        {"day": "Wednesday", "focus": "core", "exercises": []}, # Rest
+        {
+            "day": "Thursday",
+            "focus": "legs",
+            "exercises": [
+                {"name": "Baithak (Squat)", "sets": 4, "reps": "15", "rest_seconds": 60},
+                {"name": "Virabhadrasana Lunge", "sets": 3, "reps": "12", "rest_seconds": 60},
+                {"name": "Single Leg Baithak", "sets": 3, "reps": "10", "rest_seconds": 60},
+                {"name": "Tadasana Rise", "sets": 4, "reps": "20", "rest_seconds": 60},
+            ]
+        },
+        {
+            "day": "Friday",
+            "focus": "shoulders",
+            "exercises": [
+                {"name": "Pike Dand", "sets": 4, "reps": "10", "rest_seconds": 60},
+                {"name": "Hasta Vistaar", "sets": 3, "reps": "15", "rest_seconds": 60},
+                {"name": "Lateral Arm Raise", "sets": 3, "reps": "15", "rest_seconds": 60},
+            ]
+        },
+        {
+            "day": "Saturday",
+            "focus": "full_body",
+            "exercises": [
+                {"name": "Uth Baith", "sets": 3, "reps": "15", "rest_seconds": 60},
+                {"name": "Dand", "sets": 3, "reps": "15", "rest_seconds": 60},
+                {"name": "Pull-ups", "sets": 3, "reps": "8", "rest_seconds": 60},
+                {"name": "Kumbhakasana", "sets": 3, "reps": "45sec", "rest_seconds": 60},
+            ]
+        },
+        {"day": "Sunday", "focus": "core", "exercises": []} # Rest
+    ],
+    ("bodyweight", "maintain"): [
+        {
+            "day": "Monday",
+            "focus": "chest",
+            "exercises": [
+                {"name": "Dand (Push-up)", "sets": 3, "reps": "12", "rest_seconds": 60},
+                {"name": "Wide Dand", "sets": 3, "reps": "12", "rest_seconds": 60},
+                {"name": "Chaturanga Dip", "sets": 3, "reps": "12", "rest_seconds": 60},
+            ]
+        },
+        {
+            "day": "Tuesday",
+            "focus": "back",
+            "exercises": [
+                {"name": "Pull-ups", "sets": 3, "reps": "10", "rest_seconds": 60},
+                {"name": "Inverted Row", "sets": 3, "reps": "12", "rest_seconds": 60},
+                {"name": "Chin-ups", "sets": 3, "reps": "10", "rest_seconds": 60},
+            ]
+        },
+        {
+            "day": "Wednesday",
+            "focus": "core",
+            "exercises": [
+                {"name": "Jumping Jacks", "sets": 3, "reps": "45sec", "rest_seconds": 60},
+                {"name": "Mountain Climbers", "sets": 3, "reps": "40sec", "rest_seconds": 60},
+                {"name": "Plank Hold", "sets": 3, "reps": "60sec", "rest_seconds": 60},
+            ]
+        },
+        {
+            "day": "Thursday",
+            "focus": "legs",
+            "exercises": [
+                {"name": "Baithak (Squat)", "sets": 3, "reps": "15", "rest_seconds": 60},
+                {"name": "Virabhadrasana Lunge", "sets": 3, "reps": "15", "rest_seconds": 60},
+                {"name": "Tadasana Rise", "sets": 3, "reps": "20", "rest_seconds": 60},
+            ]
+        },
+        {
+            "day": "Friday",
+            "focus": "shoulders",
+            "exercises": [
+                {"name": "Pike Dand", "sets": 3, "reps": "12", "rest_seconds": 60},
+                {"name": "Hasta Vistaar", "sets": 3, "reps": "15", "rest_seconds": 60},
+                {"name": "Burpees", "sets": 3, "reps": "10", "rest_seconds": 60},
+            ]
+        },
+        {
+            "day": "Saturday",
+            "focus": "full_body",
+            "exercises": [
+                {"name": "Uth Baith", "sets": 3, "reps": "15", "rest_seconds": 60},
+                {"name": "Dand", "sets": 3, "reps": "12", "rest_seconds": 60},
+                {"name": "Jumping Jacks", "sets": 3, "reps": "60sec", "rest_seconds": 60},
+                {"name": "Kumbhakasana (Plank)", "sets": 3, "reps": "45sec", "rest_seconds": 60},
+            ]
+        },
+        {"day": "Sunday", "focus": "core", "exercises": []} # Rest
+    ],
+    ("bodyweight", "weight_loss"): [
+        {
+            "day": "Monday",
+            "focus": "chest",
+            "exercises": [
+                {"name": "Dand (Push-up)", "sets": 3, "reps": "15", "rest_seconds": 45},
+                {"name": "Wide Dand", "sets": 3, "reps": "15", "rest_seconds": 45},
+                {"name": "Diamond Dand", "sets": 3, "reps": "12", "rest_seconds": 45},
+                {"name": "Chaturanga Dip", "sets": 3, "reps": "15", "rest_seconds": 45},
+            ]
+        },
+        {
+            "day": "Tuesday",
+            "focus": "back",
+            "exercises": [
+                {"name": "Pull-ups", "sets": 3, "reps": "10", "rest_seconds": 45},
+                {"name": "Inverted Row", "sets": 3, "reps": "15", "rest_seconds": 45},
+                {"name": "Superman Hold", "sets": 3, "reps": "15", "rest_seconds": 45},
+                {"name": "Chin-ups", "sets": 3, "reps": "10", "rest_seconds": 45},
+            ]
+        },
+        {
+            "day": "Wednesday",
+            "focus": "core",
+            "exercises": [
+                {"name": "Burpees", "sets": 4, "reps": "12", "rest_seconds": 45},
+                {"name": "Jumping Jacks", "sets": 4, "reps": "45sec", "rest_seconds": 45},
+                {"name": "Mountain Climbers", "sets": 4, "reps": "45sec", "rest_seconds": 45},
+            ]
+        },
+        {
+            "day": "Thursday",
+            "focus": "legs",
+            "exercises": [
+                {"name": "Baithak (Squat)", "sets": 3, "reps": "20", "rest_seconds": 45},
+                {"name": "Virabhadrasana Lunge", "sets": 3, "reps": "15", "rest_seconds": 45},
+                {"name": "Single Leg Baithak", "sets": 3, "reps": "12", "rest_seconds": 45},
+                {"name": "Tadasana Rise", "sets": 3, "reps": "20", "rest_seconds": 45},
+            ]
+        },
+        {
+            "day": "Friday",
+            "focus": "shoulders",
+            "exercises": [
+                {"name": "Pike Dand", "sets": 3, "reps": "15", "rest_seconds": 45},
+                {"name": "Hasta Vistaar", "sets": 3, "reps": "20", "rest_seconds": 45},
+                {"name": "Lateral Arm Raise", "sets": 3, "reps": "20", "rest_seconds": 45},
+            ]
+        },
+        {
+            "day": "Saturday",
+            "focus": "full_body",
+            "exercises": [
+                {"name": "Uth Baith", "sets": 3, "reps": "20", "rest_seconds": 45},
+                {"name": "Dand", "sets": 3, "reps": "15", "rest_seconds": 45},
+                {"name": "Pull-ups", "sets": 3, "reps": "10", "rest_seconds": 45},
+                {"name": "Kumbhakasana (Plank)", "sets": 3, "reps": "60sec", "rest_seconds": 45},
+            ]
+        },
+        {"day": "Sunday", "focus": "core", "exercises": []} # Rest
+    ],
+
+    # ─── GYM PLANS ────────────────────────────────────────────────────────────
+    ("gym", "muscle_gain"): [
+        {
+            "day": "Monday",
+            "focus": "chest",
+            "exercises": [
+                {"name": "Bench Press", "sets": 4, "reps": "8-10", "rest_seconds": 60},
+                {"name": "Incline Dumbbell Press", "sets": 3, "reps": "10", "rest_seconds": 60},
+                {"name": "Push-ups", "sets": 3, "reps": "12", "rest_seconds": 60},
+                {"name": "Tricep Dips", "sets": 3, "reps": "10", "rest_seconds": 60},
+                {"name": "Tricep Pushdown", "sets": 3, "reps": "12", "rest_seconds": 60},
+            ]
+        },
+        {
+            "day": "Tuesday",
+            "focus": "back",
+            "exercises": [
+                {"name": "Pull-ups", "sets": 4, "reps": "8", "rest_seconds": 60},
+                {"name": "Barbell Rows", "sets": 4, "reps": "10", "rest_seconds": 60},
+                {"name": "Lat Pulldown", "sets": 3, "reps": "12", "rest_seconds": 60},
+                {"name": "Barbell Curls", "sets": 3, "reps": "10", "rest_seconds": 60},
+                {"name": "Hammer Curls", "sets": 3, "reps": "12", "rest_seconds": 60},
+            ]
+        },
+        {"day": "Wednesday", "focus": "core", "exercises": []}, # Rest
+        {
+            "day": "Thursday",
+            "focus": "legs",
+            "exercises": [
+                {"name": "Squats", "sets": 4, "reps": "8", "rest_seconds": 60},
+                {"name": "Leg Press", "sets": 3, "reps": "10", "rest_seconds": 60},
+                {"name": "Lunges", "sets": 3, "reps": "12", "rest_seconds": 60},
+                {"name": "Leg Curls", "sets": 3, "reps": "12", "rest_seconds": 60},
+                {"name": "Calf Raises", "sets": 4, "reps": "15", "rest_seconds": 60},
+            ]
+        },
+        {
+            "day": "Friday",
+            "focus": "shoulders",
+            "exercises": [
+                {"name": "Overhead Press", "sets": 4, "reps": "8", "rest_seconds": 60},
+                {"name": "Lateral Raises", "sets": 3, "reps": "12", "rest_seconds": 60},
+                {"name": "Front Raises", "sets": 3, "reps": "12", "rest_seconds": 60},
+                {"name": "Shrugs", "sets": 3, "reps": "15", "rest_seconds": 60},
+            ]
+        },
+        {
+            "day": "Saturday",
+            "focus": "full_body",
+            "exercises": [
+                {"name": "Deadlift", "sets": 4, "reps": "6", "rest_seconds": 60},
+                {"name": "Push-ups", "sets": 3, "reps": "15", "rest_seconds": 60},
+                {"name": "Pull-ups", "sets": 3, "reps": "8", "rest_seconds": 60},
+                {"name": "Squats", "sets": 3, "reps": "12", "rest_seconds": 60},
+            ]
+        },
+        {"day": "Sunday", "focus": "core", "exercises": []} # Rest
+    ],
+    ("gym", "maintain"): [
+        {
+            "day": "Monday",
+            "focus": "chest",
+            "exercises": [
+                {"name": "Bench Press", "sets": 3, "reps": "12", "rest_seconds": 60},
+                {"name": "Incline Dumbbell Press", "sets": 3, "reps": "12", "rest_seconds": 60},
+                {"name": "Tricep Pushdown", "sets": 3, "reps": "12", "rest_seconds": 60},
+            ]
+        },
+        {
+            "day": "Tuesday",
+            "focus": "back",
+            "exercises": [
+                {"name": "Lat Pulldown", "sets": 3, "reps": "12", "rest_seconds": 60},
+                {"name": "Barbell Rows", "sets": 3, "reps": "12", "rest_seconds": 60},
+                {"name": "Barbell Curls", "sets": 3, "reps": "12", "rest_seconds": 60},
+            ]
+        },
+        {
+            "day": "Wednesday",
+            "focus": "core",
+            "exercises": [
+                {"name": "Treadmill Run", "sets": 1, "reps": "20min", "rest_seconds": 60},
+                {"name": "Cable Crunch", "sets": 3, "reps": "15", "rest_seconds": 60},
+                {"name": "Hanging Leg Raise", "sets": 3, "reps": "12", "rest_seconds": 60},
+            ]
+        },
+        {
+            "day": "Thursday",
+            "focus": "legs",
+            "exercises": [
+                {"name": "Squats", "sets": 3, "reps": "12", "rest_seconds": 60},
+                {"name": "Leg Press", "sets": 3, "reps": "12", "rest_seconds": 60},
+                {"name": "Calf Raises", "sets": 3, "reps": "15", "rest_seconds": 60},
+            ]
+        },
+        {
+            "day": "Friday",
+            "focus": "shoulders",
+            "exercises": [
+                {"name": "Overhead Press", "sets": 3, "reps": "12", "rest_seconds": 60},
+                {"name": "Lateral Raises", "sets": 3, "reps": "15", "rest_seconds": 60},
+                {"name": "Elliptical Trainer", "sets": 1, "reps": "15min", "rest_seconds": 60},
+            ]
+        },
+        {
+            "day": "Saturday",
+            "focus": "full_body",
+            "exercises": [
+                {"name": "Kettlebell Swings", "sets": 3, "reps": "15", "rest_seconds": 60},
+                {"name": "Rowing Machine", "sets": 1, "reps": "10min", "rest_seconds": 60},
+                {"name": "Push-ups", "sets": 3, "reps": "15", "rest_seconds": 60},
+                {"name": "Dumbbell Thrusters", "sets": 3, "reps": "12", "rest_seconds": 60},
+            ]
+        },
+        {"day": "Sunday", "focus": "core", "exercises": []} # Rest
+    ],
+    ("gym", "weight_loss"): [
+        {
+            "day": "Monday",
+            "focus": "chest",
+            "exercises": [
+                {"name": "Bench Press", "sets": 3, "reps": "15", "rest_seconds": 45},
+                {"name": "Incline Dumbbell Press", "sets": 3, "reps": "15", "rest_seconds": 45},
+                {"name": "Push-ups", "sets": 3, "reps": "15", "rest_seconds": 45},
+                {"name": "Tricep Dips", "sets": 3, "reps": "12", "rest_seconds": 45},
+            ]
+        },
+        {
+            "day": "Tuesday",
+            "focus": "back",
+            "exercises": [
+                {"name": "Pull-ups", "sets": 3, "reps": "10", "rest_seconds": 45},
+                {"name": "Barbell Rows", "sets": 3, "reps": "15", "rest_seconds": 45},
+                {"name": "Lat Pulldown", "sets": 3, "reps": "15", "rest_seconds": 45},
+                {"name": "Barbell Curls", "sets": 3, "reps": "15", "rest_seconds": 45},
+            ]
+        },
+        {
+            "day": "Wednesday",
+            "focus": "core",
+            "exercises": [
+                {"name": "Kettlebell Swings", "sets": 4, "reps": "20", "rest_seconds": 45},
+                {"name": "Rowing Machine HIIT", "sets": 4, "reps": "2min", "rest_seconds": 45},
+                {"name": "Box Jumps", "sets": 4, "reps": "15", "rest_seconds": 45},
+            ]
+        },
+        {
+            "day": "Thursday",
+            "focus": "legs",
+            "exercises": [
+                {"name": "Squats", "sets": 3, "reps": "15", "rest_seconds": 45},
+                {"name": "Leg Press", "sets": 3, "reps": "15", "rest_seconds": 45},
+                {"name": "Lunges", "sets": 3, "reps": "15", "rest_seconds": 45},
+                {"name": "Leg Curls", "sets": 3, "reps": "15", "rest_seconds": 45},
+            ]
+        },
+        {
+            "day": "Friday",
+            "focus": "shoulders",
+            "exercises": [
+                {"name": "Overhead Press", "sets": 3, "reps": "15", "rest_seconds": 45},
+                {"name": "Lateral Raises", "sets": 3, "reps": "15", "rest_seconds": 45},
+                {"name": "Front Raises", "sets": 3, "reps": "15", "rest_seconds": 45},
+            ]
+        },
+        {
+            "day": "Saturday",
+            "focus": "full_body",
+            "exercises": [
+                {"name": "Deadlift", "sets": 3, "reps": "10", "rest_seconds": 45},
+                {"name": "Push-ups", "sets": 3, "reps": "20", "rest_seconds": 45},
+                {"name": "Kettlebell Swings", "sets": 3, "reps": "20", "rest_seconds": 45},
+                {"name": "Dumbbell Thrusters", "sets": 3, "reps": "15", "rest_seconds": 45},
+            ]
+        },
+        {"day": "Sunday", "focus": "core", "exercises": []} # Rest
+    ],
+
+    # ─── MINIMAL PLANS ────────────────────────────────────────────────────────
+    ("minimal", "muscle_gain"): [
+        {
+            "day": "Monday",
+            "focus": "chest",
+            "exercises": [
+                {"name": "Dumbbell Press", "sets": 4, "reps": "10", "rest_seconds": 60},
+                {"name": "Dumbbell Flyes", "sets": 3, "reps": "12", "rest_seconds": 60},
+                {"name": "Push-ups", "sets": 3, "reps": "15", "rest_seconds": 60},
+                {"name": "Dumbbell Tricep Kickback", "sets": 3, "reps": "12", "rest_seconds": 60},
+            ]
+        },
+        {
+            "day": "Tuesday",
+            "focus": "back",
+            "exercises": [
+                {"name": "Dumbbell Row", "sets": 4, "reps": "10", "rest_seconds": 60},
+                {"name": "Pull-ups", "sets": 3, "reps": "8", "rest_seconds": 60},
+                {"name": "Dumbbell Curl", "sets": 3, "reps": "12", "rest_seconds": 60},
+                {"name": "Hammer Curl", "sets": 3, "reps": "12", "rest_seconds": 60},
+            ]
+        },
+        {"day": "Wednesday", "focus": "core", "exercises": []}, # Rest
+        {
+            "day": "Thursday",
+            "focus": "legs",
+            "exercises": [
+                {"name": "Dumbbell Squat", "sets": 4, "reps": "12", "rest_seconds": 60},
+                {"name": "Dumbbell Lunge", "sets": 3, "reps": "12", "rest_seconds": 60},
+                {"name": "Dumbbell RDL", "sets": 3, "reps": "10", "rest_seconds": 60},
+                {"name": "Calf Raises", "sets": 4, "reps": "15", "rest_seconds": 60},
+            ]
+        },
+        {
+            "day": "Friday",
+            "focus": "shoulders",
+            "exercises": [
+                {"name": "Dumbbell Shoulder Press", "sets": 4, "reps": "10", "rest_seconds": 60},
+                {"name": "Lateral Raise", "sets": 3, "reps": "12", "rest_seconds": 60},
+                {"name": "Front Raise", "sets": 3, "reps": "12", "rest_seconds": 60},
+            ]
+        },
+        {
+            "day": "Saturday",
+            "focus": "full_body",
+            "exercises": [
+                {"name": "Dumbbell Thruster", "sets": 3, "reps": "12", "rest_seconds": 60},
+                {"name": "Renegade Row", "sets": 3, "reps": "10", "rest_seconds": 60},
+                {"name": "Dumbbell Squat", "sets": 3, "reps": "15", "rest_seconds": 60},
+                {"name": "Plank", "sets": 3, "reps": "45sec", "rest_seconds": 60},
+            ]
+        },
+        {"day": "Sunday", "focus": "core", "exercises": []} # Rest
+    ],
+    ("minimal", "maintain"): [
+        {
+            "day": "Monday",
+            "focus": "chest",
+            "exercises": [
+                {"name": "Dumbbell Press", "sets": 3, "reps": "12", "rest_seconds": 60},
+                {"name": "Dumbbell Flyes", "sets": 3, "reps": "12", "rest_seconds": 60},
+                {"name": "Dumbbell Tricep Kickback", "sets": 3, "reps": "12", "rest_seconds": 60},
+            ]
+        },
+        {
+            "day": "Tuesday",
+            "focus": "back",
+            "exercises": [
+                {"name": "Dumbbell Row", "sets": 3, "reps": "12", "rest_seconds": 60},
+                {"name": "Dumbbell Curl", "sets": 3, "reps": "12", "rest_seconds": 60},
+                {"name": "Hammer Curl", "sets": 3, "reps": "12", "rest_seconds": 60},
+            ]
+        },
+        {
+            "day": "Wednesday",
+            "focus": "core",
+            "exercises": [
+                {"name": "Shadow Boxing", "sets": 3, "reps": "3min", "rest_seconds": 60},
+                {"name": "Mountain Climbers", "sets": 3, "reps": "45sec", "rest_seconds": 60},
+                {"name": "Plank", "sets": 3, "reps": "60sec", "rest_seconds": 60},
+            ]
+        },
+        {
+            "day": "Thursday",
+            "focus": "legs",
+            "exercises": [
+                {"name": "Dumbbell Squat", "sets": 3, "reps": "12", "rest_seconds": 60},
+                {"name": "Dumbbell Lunge", "sets": 3, "reps": "12", "rest_seconds": 60},
+                {"name": "Calf Raises", "sets": 3, "reps": "15", "rest_seconds": 60},
+            ]
+        },
+        {
+            "day": "Friday",
+            "focus": "shoulders",
+            "exercises": [
+                {"name": "Dumbbell Shoulder Press", "sets": 3, "reps": "12", "rest_seconds": 60},
+                {"name": "Lateral Raise", "sets": 3, "reps": "15", "rest_seconds": 60},
+                {"name": "Dumbbell Jacks", "sets": 3, "reps": "45sec", "rest_seconds": 60},
+            ]
+        },
+        {
+            "day": "Saturday",
+            "focus": "full_body",
+            "exercises": [
+                {"name": "Dumbbell Thruster", "sets": 3, "reps": "12", "rest_seconds": 60},
+                {"name": "Renegade Row", "sets": 3, "reps": "12", "rest_seconds": 60},
+                {"name": "Dumbbell Squat", "sets": 3, "reps": "12", "rest_seconds": 60},
+                {"name": "Plank", "sets": 3, "reps": "45sec", "rest_seconds": 60},
+            ]
+        },
+        {"day": "Sunday", "focus": "core", "exercises": []} # Rest
+    ],
+    ("minimal", "weight_loss"): [
+        {
+            "day": "Monday",
+            "focus": "chest",
+            "exercises": [
+                {"name": "Dumbbell Press", "sets": 3, "reps": "15", "rest_seconds": 45},
+                {"name": "Dumbbell Flyes", "sets": 3, "reps": "15", "rest_seconds": 45},
+                {"name": "Push-ups", "sets": 3, "reps": "15", "rest_seconds": 45},
+                {"name": "Dumbbell Tricep Kickback", "sets": 3, "reps": "15", "rest_seconds": 45},
+            ]
+        },
+        {
+            "day": "Tuesday",
+            "focus": "back",
+            "exercises": [
+                {"name": "Dumbbell Row", "sets": 3, "reps": "15", "rest_seconds": 45},
+                {"name": "Pull-ups", "sets": 3, "reps": "10", "rest_seconds": 45},
+                {"name": "Dumbbell Curl", "sets": 3, "reps": "15", "rest_seconds": 45},
+                {"name": "Hammer Curl", "sets": 3, "reps": "15", "rest_seconds": 45},
+            ]
+        },
+        {
+            "day": "Wednesday",
+            "focus": "core",
+            "exercises": [
+                {"name": "Dumbbell Thruster", "sets": 4, "reps": "15", "rest_seconds": 45},
+                {"name": "Renegade Row", "sets": 4, "reps": "12", "rest_seconds": 45},
+                {"name": "Dumbbell Jacks", "sets": 4, "reps": "45sec", "rest_seconds": 45},
+            ]
+        },
+        {
+            "day": "Thursday",
+            "focus": "legs",
+            "exercises": [
+                {"name": "Dumbbell Squat", "sets": 3, "reps": "15", "rest_seconds": 45},
+                {"name": "Dumbbell Lunge", "sets": 3, "reps": "15", "rest_seconds": 45},
+                {"name": "Dumbbell RDL", "sets": 3, "reps": "12", "rest_seconds": 45},
+                {"name": "Calf Raises", "sets": 3, "reps": "20", "rest_seconds": 45},
+            ]
+        },
+        {
+            "day": "Friday",
+            "focus": "shoulders",
+            "exercises": [
+                {"name": "Dumbbell Shoulder Press", "sets": 3, "reps": "15", "rest_seconds": 45},
+                {"name": "Lateral Raise", "sets": 3, "reps": "15", "rest_seconds": 45},
+                {"name": "Front Raise", "sets": 3, "reps": "15", "rest_seconds": 45},
+            ]
+        },
+        {
+            "day": "Saturday",
+            "focus": "full_body",
+            "exercises": [
+                {"name": "Dumbbell Thruster", "sets": 3, "reps": "15", "rest_seconds": 45},
+                {"name": "Renegade Row", "sets": 3, "reps": "12", "rest_seconds": 45},
+                {"name": "Dumbbell Squat", "sets": 3, "reps": "15", "rest_seconds": 45},
+                {"name": "Plank", "sets": 3, "reps": "60sec", "rest_seconds": 45},
+            ]
+        },
+        {"day": "Sunday", "focus": "core", "exercises": []} # Rest
+    ]
+}
+
 
 def _generate_plan(goal: str, activity_level: str, equipment: str) -> list:
-    available = [ex for ex in ALL_EXERCISES
-                 if equipment == "gym" or ex["equipment"] == equipment or ex["equipment"] == "bodyweight"]
-    if not available:
-        available = ALL_EXERCISES
-
-    day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-
-    if goal == "muscle_gain":
-        splits = ["chest", "back", "legs", "shoulders", "arms", "core", "full_body"]
-        sets_range = (4, 5) if equipment == "gym" else (3, 4)
-        reps_range = (8, 12)
-    elif goal == "weight_loss":
-        splits = ["full_body", "core", "legs", "full_body", "core", "legs", "full_body"]
-        sets_range = (3, 4)
-        reps_range = (15, 20)
-    else:
-        splits = ["chest", "back", "legs", "shoulders", "arms", "core", "full_body"]
-        sets_range = (3, 4)
-        reps_range = (10, 15)
-
-    plan = []
-    for i, day in enumerate(day_names):
-        group = splits[i % len(splits)]
-        exercises_for_group = [ex for ex in available if ex["muscle_group"] == group]
-        if not exercises_for_group:
-            exercises_for_group = [ex for ex in available if ex["muscle_group"] == "full_body"]
-        selected = exercises_for_group[:3]
-        exercises = []
-        for ex in selected:
-            exercises.append({
-                "name": ex["name"],
-                "sets": sets_range[0] + (i % (sets_range[1] - sets_range[0] + 1)),
-                "reps": reps_range[1],
-                "rest_seconds": 60 if goal == "muscle_gain" else 30,
-            })
-        plan.append({"day": day, "focus": group, "exercises": exercises})
-    return plan
+    """Look up plan in PLANS_DB, normalizing parameters."""
+    eq = equipment.lower().strip()
+    g = goal.lower().strip()
+    
+    # Normalize synonyms
+    if g == "weight_gain":
+        g = "muscle_gain"
+    elif g == "fat_loss":
+        g = "weight_loss"
+        
+    return PLANS_DB.get((eq, g), PLANS_DB[("bodyweight", "maintain")])
 
 
 class WorkoutPlanRequest(BaseModel):
@@ -220,6 +724,34 @@ def generate_workout_plan(req: WorkoutPlanRequest, current_user_id: int = Depend
     db.commit()
 
     return {"status": "success", "plan": {"plan_json": json.dumps(plan), "week_start_date": week_start}}
+
+
+@router.get("/plan")
+def get_single_workout_plan(
+    equipment: str = Query("bodyweight"),
+    goal: str = Query("maintain"),
+    current_user_id: int = Depends(require_user_id)
+):
+    """
+    Get a specific workout plan based on BOTH equipment and goal parameters.
+    """
+    eq = equipment.lower().strip()
+    g = goal.lower().strip()
+    
+    # Normalize synonyms
+    if g == "weight_gain":
+        g = "muscle_gain"
+    elif g == "fat_loss":
+        g = "weight_loss"
+        
+    plan = PLANS_DB.get((eq, g), None)
+    if not plan:
+        raise HTTPException(
+            status_code=404, 
+            detail=f"Workout plan not found for equipment '{equipment}' and goal '{goal}'"
+        )
+        
+    return {"status": "success", "plan": plan}
 
 
 class WorkoutLogEntry(BaseModel):

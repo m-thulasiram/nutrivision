@@ -80,6 +80,9 @@ export default function ScanScreen({ navigation }: { navigation: any }) {
   const [flash, setFlash] = useState(false);
   const [candidatesMap, setCandidatesMap] = useState<Record<string, any[]>>({});
   const [selectedCandidates, setSelectedCandidates] = useState<Record<string, any>>({});
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [scanResult, setScanResult] = useState<any | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
 
   useEffect(() => {
@@ -94,6 +97,18 @@ export default function ScanScreen({ navigation }: { navigation: any }) {
       return () => pulse.stop();
     }
   }, [screenState, pulseAnim]);
+
+  // Loading timer for processing phase
+  useEffect(() => {
+    if (screenState !== 'processing') {
+      setElapsedSeconds(0);
+      return;
+    }
+    const timer = setInterval(() => {
+      setElapsedSeconds((s) => s + 1);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [screenState]);
 
   const takePicture = useCallback(async () => {
     if (!cameraRef.current) return;
@@ -143,84 +158,77 @@ export default function ScanScreen({ navigation }: { navigation: any }) {
   const analyzeImage = async (base64Data: string | null, uri: string) => {
     setProcessing(true);
     setError('');
-    setProcessingStatus('Analysing your meal...');
-
-    // Show warm-up message timers for Render cold start UX
-    const t1 = setTimeout(() => setProcessingStatus('🔄 Connecting to server...'), 8000);
-    const t2 = setTimeout(() => setProcessingStatus('⏳ Server is waking up (free tier)...'), 20000);
-    const t3 = setTimeout(() => setProcessingStatus('⏳ Still warming up, please wait...'), 45000);
-    const t4 = setTimeout(() => setProcessingStatus('🐌 Almost there, Render is slow to start...'), 70000);
-
-    const clearTimers = () => {
-      clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); clearTimeout(t4);
-    };
+    
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    
+    // 60-second fetch timeout
+    const timeoutId = setTimeout(() => {
+      controller.abort();
+    }, 60000);
 
     try {
       const token = await getToken();
 
-      // Guard: reject if base64 is too large (>2MB string = ~1.5MB image = safe for Render)
-      if (base64Data && base64Data.length > 2 * 1024 * 1024) {
-        throw new Error('Image too large. Please try again — camera will compress it automatically.');
+      // Guard: reject if base64 is too large (>4MB string)
+      if (base64Data && base64Data.length > 4 * 1024 * 1024) {
+        throw new Error('Image too large. Please try again.');
       }
-
-      // Helper to make one attempt with 90s timeout
-      const doFetch = async (): Promise<Response> => {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 90000);
-        try {
-          if (base64Data) {
-            return await fetch(`${BASE_URL}/api/analyze-meal-b64`, {
-              method: 'POST',
-              headers: {
-                Authorization: `Bearer ${token}`,
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({ image_base64: base64Data }),
-              signal: controller.signal,
-            });
-          } else {
-            const formData = new FormData();
-            formData.append('image', { uri, type: 'image/jpeg', name: 'meal.jpg' } as any);
-            return await fetch(`${BASE_URL}/api/analyze-meal`, {
-              method: 'POST',
-              headers: { Authorization: `Bearer ${token}` },
-              body: formData,
-              signal: controller.signal,
-            });
-          }
-        } finally {
-          clearTimeout(timeoutId);
-        }
-      };
 
       let response: Response;
-      try {
-        response = await doFetch();
-      } catch (firstErr: any) {
-        // If first attempt timed out (Render cold start), auto-retry once
-        if (firstErr?.name === 'AbortError') {
-          setProcessingStatus('🔁 Retrying after server wake-up...');
-          response = await doFetch();
-        } else {
-          throw firstErr;
-        }
+      if (base64Data) {
+        response = await fetch(`${BASE_URL}/api/analyze-meal-b64`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ image_base64: base64Data }),
+          signal: controller.signal,
+        });
+      } else {
+        const formData = new FormData();
+        formData.append('image', { uri, type: 'image/jpeg', name: 'meal.jpg' } as any);
+        response = await fetch(`${BASE_URL}/api/analyze-meal`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+          body: formData,
+          signal: controller.signal,
+        });
       }
 
+      clearTimeout(timeoutId);
+
+      // Check content type BEFORE parsing to handle HTML error pages safely
+      const contentType = response.headers.get("content-type") || "";
+      if (!contentType.includes("application/json")) {
+        throw new Error("Server is unavailable. Please check your connection and try again.");
+      }
+
+      // Check response is not empty
       const responseText = await response.text();
+      if (!responseText || responseText.trim() === "") {
+        throw new Error("Server returned empty response. Please try again.");
+      }
+
+      // Parse JSON safely
       let data: any;
       try {
         data = JSON.parse(responseText);
       } catch {
-        // Backend crashed or returned empty body (OOM/timeout on Render)
-        throw new Error(
-          responseText.trim()
-            ? `Server error (${response.status}): ${responseText.slice(0, 120)}`
-            : `Server error (${response.status}): No response — server may be restarting. Please try again.`
-        );
+        throw new Error("Could not read server response. Please try again.");
       }
+
       if (!response.ok) {
-        throw new ApiRequestError(response.status, data.detail || 'Analysis failed');
+        throw new Error(data?.detail || data?.error_message || `Server error (${response.status})`);
       }
+
+      if (data.status === "error") {
+        throw new Error(data.error_message || "Analysis failed. Please try again.");
+      }
+
+      // Save full response for demo mode banner check
+      setScanResult(data);
 
       if (data.status === 'uncertain' || !data.detections || data.detections.length === 0) {
         setDetections([]);
@@ -250,7 +258,6 @@ export default function ScanScreen({ navigation }: { navigation: any }) {
 
             if (matchData && matchData.success && matchData.candidates.length > 0) {
               newCandidatesMap[det.raw_model_label] = matchData.candidates;
-              // Default to the first candidate (which has highest score)
               defaultSelections[det.raw_model_label] = matchData.candidates[0];
             }
           } catch (e) {
@@ -263,25 +270,32 @@ export default function ScanScreen({ navigation }: { navigation: any }) {
       setSelectedCandidates(defaultSelections);
 
     } catch (err: any) {
+      clearTimeout(timeoutId);
       const msg = err?.message || String(err);
-      clearTimers();
-      if (err instanceof ApiRequestError) {
-        if (err.status === 401) {
-          navigation.reset({ index: 0, routes: [{ name: 'SignIn' }] });
-          return;
-        }
-        setError(err.message);
-        alert('Server Error: ' + err.message);
-      } else if (err?.name === 'AbortError') {
-        setError('Request timed out — server took too long. Please try again.');
-        alert('Network Error: Request timed out after 3 minutes. The server may be overloaded. Please try again.');
+      
+      // User-friendly error messages
+      let userMessage = "Could not analyse the image.";
+      if (err.name === "AbortError" || err.message?.includes("AbortError")) {
+        userMessage = "Request timed out. The AI is taking too long. Please try again with a clearer photo.";
+      } else if (
+        msg.includes("Network") ||
+        msg.includes("fetch") ||
+        msg.includes("connection")
+      ) {
+        userMessage = "Connection failed. Make sure the app is connected to the same network as the server.";
+      } else if (
+        msg.includes("unavailable") ||
+        msg.includes("502")
+      ) {
+        userMessage = "Server is starting up. Please wait 30 seconds and try again.";
       } else {
-        setError('Analysis failed: ' + msg);
-        alert('Network Error: ' + msg);
+        userMessage = msg || "Analysis failed. Try again.";
       }
+
+      setError(userMessage);
+      alert(userMessage);
       setScreenState('camera');
     } finally {
-      clearTimers();
       setProcessing(false);
     }
   };
@@ -448,24 +462,39 @@ export default function ScanScreen({ navigation }: { navigation: any }) {
         {capturedUri ? (
           <Image source={{ uri: capturedUri }} style={styles.previewImage} />
         ) : null}
-        <Animated.View style={[styles.processingOverlay, { opacity: pulseAnim }]}>
+        <View style={styles.processingOverlay}>
           <ActivityIndicator size="large" color="#1D9E75" />
-          <Text style={styles.processingText}>{processingStatus}</Text>
-          <Text style={styles.processingSubtext}>
-            {processingStatus.includes('waking') || processingStatus.includes('warming') || processingStatus.includes('slow') || processingStatus.includes('Retry')
-              ? 'The free server sleeps when idle.\nFirst request takes 60-90 seconds.'
-              : 'Identifying foods and calculating nutrition'}
+          
+          <Text style={styles.processingTitle}>
+            Analysing your meal...
           </Text>
-        </Animated.View>
+          
+          <Text style={styles.processingSubtitle}>
+            AI is identifying your food.{"\n"}
+            This takes 10-15 seconds.{"\n"}
+            Please wait ⏳
+          </Text>
+          
+          <Text style={styles.processingTimer}>
+            {elapsedSeconds}s elapsed
+          </Text>
+          
+          <TouchableOpacity
+            style={styles.cancelBtn}
+            onPress={() => {
+              abortControllerRef.current?.abort();
+              setScreenState("camera");
+            }}
+          >
+            <Text style={styles.cancelBtnText}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     );
   }
 
   if (screenState === 'results') {
     const hasDetections = detections.length > 0;
-    const uncertainDetections = detections.filter((d) => d.confidence < 0.75 && d.confidence >= 0.50);
-    const unknownDetections = detections.filter((d) => d.confidence < 0.50);
-    const goodDetections = detections.filter((d) => d.confidence >= 0.75);
 
     return (
       <View style={styles.container}>
@@ -473,217 +502,31 @@ export default function ScanScreen({ navigation }: { navigation: any }) {
           <Image source={{ uri: capturedUri }} style={styles.previewImageTop} />
         ) : null}
         <ScrollView style={styles.resultsSheet} contentContainerStyle={styles.resultsContent}>
+          {scanResult?.is_demo_mode && (
+            <View style={styles.demoBanner}>
+              <Text style={styles.demoBannerText}>
+                🔑 Demo Mode — Add OpenAI API key for real food detection
+              </Text>
+            </View>
+          )}
           {hasDetections ? (
             <>
-              {goodDetections.map((det, idx) => {
-                const candidate = selectedCandidates[det.raw_model_label];
-                const sizeMult = det.estimated_weight_g / 100;
-                
-                const displayName = candidate ? candidate.food_name : det.class_name;
-                const displayRegion = candidate ? `${candidate.state || candidate.cuisine} (${det.raw_model_label.replace("_", " ")})` : `${det.raw_model_label.replace("_", " ")}`;
-                
-                const displayCals = candidate ? Math.round(candidate.calories * sizeMult) : Math.round(det.calories);
-                const displayPro = candidate ? Math.round(candidate.protein_g * sizeMult) : Math.round(det.protein);
-                const displayCarbs = candidate ? Math.round(candidate.carbs_g * sizeMult) : Math.round(det.carbs);
-                const displayFat = candidate ? Math.round(candidate.fats_g * sizeMult) : Math.round(det.fat);
-
-                return (
-                  <View key={idx} style={styles.detectionCard}>
-                    <View style={styles.detectionHeader}>
-                      <Text style={styles.detectionName}>{displayName}</Text>
-                      <Text style={styles.detectionConf}>{Math.round(det.confidence * 100)}% ●●●●○</Text>
-                    </View>
-                    <Text style={styles.detectionRegion}>{displayRegion} 🌿</Text>
-                    <Text style={styles.detectionMacros}>
-                      {displayCals} kcal · {displayPro}g P · {displayCarbs}g C · {displayFat}g F
-                    </Text>
-
-                    {/* Regional Candidates List */}
-                    {candidatesMap[det.raw_model_label] && (
-                      <View style={styles.candidatesContainer}>
-                        <Text style={styles.candidatesTitle}>Select precise regional dish:</Text>
-                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.candidatesScroll}>
-                          {candidatesMap[det.raw_model_label].map((cand) => {
-                            const isSelected = selectedCandidates[det.raw_model_label]?.food_name === cand.food_name;
-                            return (
-                              <TouchableOpacity
-                                key={cand.food_name}
-                                style={[
-                                  styles.candidateChip,
-                                  isSelected && styles.candidateChipActive,
-                                ]}
-                                onPress={() => {
-                                  setSelectedCandidates((prev) => ({
-                                    ...prev,
-                                    [det.raw_model_label]: cand,
-                                  }));
-                                }}
-                              >
-                                <Text style={[
-                                  styles.candidateChipText,
-                                  isSelected && styles.candidateChipTextActive,
-                                ]}>
-                                  {cand.food_name} ({cand.state || cand.cuisine})
-                                </Text>
-                              </TouchableOpacity>
-                            );
-                          })}
-                        </ScrollView>
-                      </View>
-                    )}
-
-                    <View style={styles.portionRow}>
-                      {(['small', 'medium', 'large'] as const).map((p) => (
-                        <TouchableOpacity
-                          key={p}
-                          style={[
-                            styles.portionButton,
-                            confirmedItems.some((i) => i.name === displayName && i.portion === p) && styles.portionActive,
-                          ]}
-                          onPress={() => confirmItem(det, p)}
-                        >
-                          <Text style={[
-                            styles.portionText,
-                            confirmedItems.some((i) => i.name === displayName && i.portion === p) && styles.portionTextActive,
-                          ]}>
-                            {capitalizeLabel(p)}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-                    <View style={styles.detectionActions}>
-                      <TouchableOpacity
-                        style={styles.addButton}
-                        onPress={() => confirmItem(det, 'medium')}
-                      >
-                        <Text style={styles.addButtonText}>✓ Add to meal</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={styles.removeButton}
-                        onPress={() => removeItem(displayName)}
-                      >
-                        <Text style={styles.removeButtonText}>✗ Remove</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                );
-              })}
-
-              {uncertainDetections.map((det, idx) => (
-                <View key={idx} style={styles.uncertainCard}>
-                  <Text style={styles.uncertainTitle}>❓ What is this food?</Text>
-                  <View style={styles.uncertainOptions}>
-                    {['Idli', 'Vada', 'Medu Vada'].map((opt, oi) => (
-                      <TouchableOpacity
-                        key={oi}
-                        style={styles.uncertainOption}
-                        onPress={() => {
-                          setConfirmedItems((prev) => [
-                            ...prev,
-                            { name: opt, calories: 150, protein: 4, carbs: 30, fat: 2, portion: 'medium' },
-                          ]);
-                        }}
-                      >
-                        <Text style={styles.uncertainOptionText}>{opt}</Text>
-                        <Text style={styles.uncertainOptionPct}>{100 - oi * 17}%</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                  <TouchableOpacity
-                    onPress={() => setScreenState('manual')}
-                  >
-                    <Text style={styles.uncertainManual}>None of these — type manually</Text>
-                  </TouchableOpacity>
-                </View>
+              {detections.map((det, idx) => (
+                <FoodDetectionCard
+                  key={idx}
+                  det={det}
+                  confirmedItems={confirmedItems}
+                  onConfirm={confirmItem}
+                  onRemove={removeItem}
+                />
               ))}
-
-              {unknownDetections.length > 0 && !hasDetections ? (
-                <View style={styles.unknownCard}>
-                  <Text style={styles.unknownTitle}>🔍 Food not recognised</Text>
-                  <TextInput
-                    style={styles.unknownSearch}
-                    placeholder="Type to search your food..."
-                    placeholderTextColor="#9CA3AF"
-                    autoFocus
-                    value={searchQuery}
-                    onChangeText={(t) => {
-                      setSearchQuery(t);
-                      searchFoods(t);
-                    }}
-                  />
-                  {searchQuery.length > 0 ? (
-                    <Text style={styles.unknownSuggestion}>
-                      No results found. Try another name.
-                    </Text>
-                  ) : null}
-                  <TouchableOpacity
-                    style={styles.manualEntryButton}
-                    onPress={() => setScreenState('manual')}
-                  >
-                    <Text style={styles.manualEntryText}>Search manually</Text>
-                  </TouchableOpacity>
-                </View>
-              ) : null}
             </>
           ) : (
             <View style={styles.noDetections}>
               <Text style={styles.noDetectTitle}>No food detected</Text>
-              
-              {topPredictions.length > 0 ? (
-                <View style={styles.suggestionsContainer}>
-                  <Text style={styles.suggestionsTitle}>Did you mean one of these?</Text>
-                  {topPredictions.map((pred, pIdx) => {
-                    const cleanName = pred.label.replace('_', ' ');
-                    return (
-                      <TouchableOpacity
-                        key={pred.label}
-                        style={styles.suggestionItem}
-                        onPress={async () => {
-                          const dummyDet: DetectionResult = {
-                            class_name: cleanName,
-                            confidence: pred.prob,
-                            calories: 250,
-                            protein: 8,
-                            carbs: 30,
-                            fat: 6,
-                            estimated_weight_g: 100,
-                            raw_model_label: pred.label
-                          };
-                          setDetections([dummyDet]);
-                          try {
-                            const matchData = await apiCall<{
-                              success: boolean;
-                              candidates: any[];
-                            }>('/api/scanner/match', 'POST', {
-                              detected_class: pred.label,
-                            }, true);
-                            if (matchData.success && matchData.candidates.length > 0) {
-                              setCandidatesMap((prev) => ({
-                                ...prev,
-                                [pred.label]: matchData.candidates
-                              }));
-                              setSelectedCandidates((prev) => ({
-                                ...prev,
-                                [pred.label]: matchData.candidates[0]
-                              }));
-                            }
-                          } catch (err) {
-                            console.error('Failed to match prediction:', err);
-                          }
-                        }}
-                      >
-                        <Text style={styles.suggestionText}>{cleanName}</Text>
-                        <Text style={styles.suggestionPct}>{Math.round(pred.prob * 100)}% Match</Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              ) : (
-                <Text style={styles.noDetectSub}>
-                  Please try taking a clearer photo from a different angle.
-                </Text>
-              )}
-
+              <Text style={styles.noDetectSub}>
+                Please try taking a clearer photo from a different angle or lighting.
+              </Text>
               <TouchableOpacity
                 style={styles.tryAgainButton}
                 onPress={() => setScreenState('camera')}
@@ -744,7 +587,7 @@ export default function ScanScreen({ navigation }: { navigation: any }) {
                 style={styles.searchResultItem}
                 onPress={() => {
                   setConfirmedItems((prev) => [
-                    ...prev,
+                    ...prev.filter((it) => it.name !== name),
                     {
                       name,
                       calories: food.Calories || 0,
@@ -851,6 +694,234 @@ export default function ScanScreen({ navigation }: { navigation: any }) {
           )}
         </TouchableOpacity>
       </ScrollView>
+    </View>
+  );
+}
+
+interface FoodDetectionCardProps {
+  det: any;
+  confirmedItems: ConfirmedItem[];
+  onConfirm: (detection: any, portion: 'small' | 'medium' | 'large') => void;
+  onRemove: (name: string) => void;
+}
+
+function FoodDetectionCard({ det, confirmedItems, onConfirm, onRemove }: FoodDetectionCardProps) {
+  const [showMicros, setShowMicros] = useState(false);
+  const [portion, setPortion] = useState<'small' | 'medium' | 'large'>('medium');
+  
+  const hasNutrition = !!det.nutrition;
+  const displayName = det.nutrition ? det.nutrition.food_name : det.food_name;
+  const isConfirmed = confirmedItems.some((i) => i.name === displayName);
+  const currentConfirmedPortion = confirmedItems.find((i) => i.name === displayName)?.portion;
+  
+  const activePortion = currentConfirmedPortion || portion;
+  const multiplier = activePortion === 'small' ? 0.7 : activePortion === 'large' ? 1.4 : 1.0;
+  
+  const nutrition = det.nutrition ? {
+    calories: Math.round(det.nutrition.calories * multiplier),
+    protein_g: Math.round(det.nutrition.protein_g * multiplier * 10) / 10,
+    carbs_g: Math.round(det.nutrition.carbs_g * multiplier * 10) / 10,
+    fats_g: Math.round(det.nutrition.fats_g * multiplier * 10) / 10,
+    fibre_g: Math.round(det.nutrition.fibre_g * multiplier * 10) / 10,
+    sugar_g: Math.round(det.nutrition.sugar_g * multiplier * 10) / 10,
+    iron_mg: Math.round(det.nutrition.iron_mg * multiplier * 100) / 100,
+    calcium_mg: Math.round(det.nutrition.calcium_mg * multiplier * 10) / 10,
+    sodium_mg: Math.round(det.nutrition.sodium_mg * multiplier * 10) / 10,
+    potassium_mg: Math.round(det.nutrition.potassium_mg * multiplier * 10) / 10,
+    vitamin_d_iu: Math.round(det.nutrition.vitamin_d_iu * multiplier * 10) / 10,
+  } : null;
+
+  return (
+    <View style={styles.detectionCard}>
+      <View style={styles.detectionHeader}>
+        <Text style={styles.detectionName}>{displayName}</Text>
+        <Text style={styles.detectionConf}>{Math.round(det.confidence * 100)}% Match</Text>
+      </View>
+      
+      {det.description ? (
+        <Text style={styles.detectionRegion}>{det.description} 🌿</Text>
+      ) : null}
+
+      {det.veg_warning ? (
+        <Text style={styles.vegWarningText}>⚠️ {det.veg_warning}</Text>
+      ) : null}
+
+      {hasNutrition && nutrition ? (
+        <>
+          {/* Main macros */}
+          <View style={styles.macroRow}>
+            <MacroPill label="kcal" value={nutrition.calories} color="#1A1A1A"/>
+            <MacroPill label="protein" value={`${nutrition.protein_g}g`} color="#1D9E75"/>
+            <MacroPill label="carbs" value={`${nutrition.carbs_g}g`} color="#185FA5"/>
+            <MacroPill label="fats" value={`${nutrition.fats_g}g`} color="#BA7517"/>
+          </View>
+
+          {/* Micronutrients — expandable */}
+          <TouchableOpacity 
+            onPress={() => setShowMicros(!showMicros)}
+            style={styles.microsToggle}
+          >
+            <Text style={styles.microsToggleText}>
+              {showMicros 
+                ? "Hide micronutrients ▲" 
+                : "Show vitamins & minerals ▼"}
+            </Text>
+          </TouchableOpacity>
+
+          {showMicros && (
+            <View style={styles.microsGrid}>
+              <MicroRow label="Fibre" 
+                value={`${nutrition.fibre_g}g`}
+                daily="25g" 
+                pct={nutrition.fibre_g/25}/>
+              <MicroRow label="Sugar" 
+                value={`${nutrition.sugar_g}g`}
+                daily="50g" 
+                pct={nutrition.sugar_g/50}/>
+              <MicroRow label="Iron" 
+                value={`${nutrition.iron_mg}mg`}
+                daily="18mg" 
+                pct={nutrition.iron_mg/18}/>
+              <MicroRow label="Calcium" 
+                value={`${nutrition.calcium_mg}mg`}
+                daily="1000mg" 
+                pct={nutrition.calcium_mg/1000}/>
+              <MicroRow label="Sodium" 
+                value={`${nutrition.sodium_mg}mg`}
+                daily="2300mg" 
+                pct={nutrition.sodium_mg/2300}/>
+              <MicroRow label="Vitamin D" 
+                value={`${nutrition.vitamin_d_iu}IU`}
+                daily="600IU" 
+                pct={nutrition.vitamin_d_iu/600}/>
+            </View>
+          )}
+          
+          <View style={styles.portionRow}>
+            {(['small', 'medium', 'large'] as const).map((p) => {
+              const isPortionActive = activePortion === p;
+              return (
+                <TouchableOpacity
+                  key={p}
+                  style={[
+                    styles.portionButton,
+                    isPortionActive && styles.portionActive,
+                  ]}
+                  onPress={() => {
+                    setPortion(p);
+                    onConfirm(det, p);
+                  }}
+                >
+                  <Text style={[
+                    styles.portionText,
+                    isPortionActive && styles.portionTextActive,
+                  ]}>
+                    {p.charAt(0).toUpperCase() + p.slice(1)}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </>
+      ) : (
+        <View style={styles.notInDbContainer}>
+          <Text style={styles.notInDbText}>{det.message || "Not found in database"}</Text>
+          {det.suggestions && det.suggestions.length > 0 && (
+            <View style={styles.suggestionsContainer}>
+              <Text style={styles.suggestionsTitle}>Suggested database matches:</Text>
+              {det.suggestions.map((sug: string, sIdx: number) => (
+                <TouchableOpacity
+                  key={sIdx}
+                  style={styles.suggestionItem}
+                  onPress={async () => {
+                    try {
+                      const data = await apiCall<{ foods: FoodSearchResult[] }>(
+                        `/api/foods/search?q=${encodeURIComponent(sug)}`,
+                        'GET', undefined, true
+                      );
+                      if (data && data.foods && data.foods.length > 0) {
+                        const matched = data.foods[0];
+                        const name = matched.Food_items || matched.food_items || sug;
+                        onConfirm({
+                          nutrition: {
+                            food_name: name,
+                            calories: matched.Calories || 0,
+                            protein_g: matched.Proteins || 0,
+                            carbs_g: matched.Carbohydrates || 0,
+                            fats_g: matched.Fats || 0,
+                            fibre_g: 0,
+                            sugar_g: 0,
+                            iron_mg: 0,
+                            calcium_mg: 0,
+                            sodium_mg: 0,
+                            potassium_mg: 0,
+                            vitamin_d_iu: 0,
+                            VegNovVeg: matched.Veg_Flag === 0 ? "0" : "1"
+                          },
+                          confidence: det.confidence,
+                          food_name: name
+                        }, 'medium');
+                      }
+                    } catch (e) {
+                      console.error("Failed to add suggestion:", e);
+                    }
+                  }}
+                >
+                  <Text style={styles.suggestionText}>{sug}</Text>
+                  <Text style={styles.suggestionAddText}>+ Add</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+        </View>
+      )}
+
+      <View style={styles.detectionActions}>
+        <TouchableOpacity
+          style={[styles.addButton, isConfirmed && styles.addButtonConfirmed]}
+          onPress={() => onConfirm(det, activePortion)}
+        >
+          <Text style={styles.addButtonText}>
+            {isConfirmed ? "✓ Added to meal" : "+ Add to meal"}
+          </Text>
+        </TouchableOpacity>
+        {isConfirmed && (
+          <TouchableOpacity
+            style={styles.removeButton}
+            onPress={() => onRemove(displayName)}
+          >
+            <Text style={styles.removeButtonText}>✗ Remove</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    </View>
+  );
+}
+
+function MacroPill({ label, value, color }: { label: string; value: string | number; color: string }) {
+  return (
+    <View style={[styles.macroPill, { backgroundColor: color }]}>
+      <Text style={styles.macroPillValue}>{value}</Text>
+      <Text style={styles.macroPillLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function MicroRow({ label, value, daily, pct }: { label: string; value: string; daily: string; pct: number }) {
+  return (
+    <View style={styles.microRow}>
+      <Text style={styles.microLabel}>{label}</Text>
+      <View style={styles.microBarWrap}>
+        <View style={[
+          styles.microBar,
+          { 
+            width: `${Math.min(100, pct * 100)}%`,
+            backgroundColor: pct >= 0.5 ? "#1D9E75" : "#E24B4A"
+          }
+        ]}/>
+      </View>
+      <Text style={styles.microValue}>{value}</Text>
+      <Text style={styles.microDaily}>/{daily}</Text>
     </View>
   );
 }
@@ -1037,17 +1108,98 @@ const styles = StyleSheet.create({
   detectionConf: {
     fontSize: 12,
     color: '#1D9E75',
-    fontWeight: '600',
+    fontWeight: '700',
   },
   detectionRegion: {
-    fontSize: 12,
-    color: '#6B7280',
-    marginBottom: 8,
-  },
-  detectionMacros: {
     fontSize: 13,
     color: '#6B7280',
     marginBottom: 12,
+    fontStyle: 'italic',
+  },
+  macroRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 8,
+    marginBottom: 16,
+  },
+  macroPill: {
+    flex: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  macroPillValue: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  macroPillLabel: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 10,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    marginTop: 2,
+  },
+  microsToggle: {
+    paddingVertical: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F9FAFB',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    marginBottom: 16,
+  },
+  microsToggleText: {
+    color: '#4B5563',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  microsGrid: {
+    backgroundColor: '#F9FAFB',
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    marginBottom: 16,
+    gap: 10,
+  },
+  microRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  microLabel: {
+    width: 70,
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#4B5563',
+  },
+  microBarWrap: {
+    flex: 1,
+    height: 6,
+    backgroundColor: '#E5E7EB',
+    borderRadius: 3,
+    marginHorizontal: 10,
+    overflow: 'hidden',
+  },
+  microBar: {
+    height: '100%',
+    borderRadius: 3,
+  },
+  microValue: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1F2937',
+    textAlign: 'right',
+  },
+  microDaily: {
+    width: 50,
+    fontSize: 11,
+    color: '#9CA3AF',
+    textAlign: 'right',
   },
   portionRow: {
     flexDirection: 'row',
@@ -1062,6 +1214,7 @@ const styles = StyleSheet.create({
     borderColor: '#E5E7EB',
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: '#FFFFFF',
   },
   portionActive: {
     borderColor: '#1D9E75',
@@ -1074,27 +1227,32 @@ const styles = StyleSheet.create({
   },
   portionTextActive: {
     color: '#1D9E75',
+    fontWeight: '700',
   },
   detectionActions: {
     flexDirection: 'row',
     gap: 8,
+    marginTop: 4,
   },
   addButton: {
     flex: 1,
-    height: 40,
+    height: 42,
     borderRadius: 10,
     backgroundColor: '#1D9E75',
     justifyContent: 'center',
     alignItems: 'center',
   },
+  addButtonConfirmed: {
+    backgroundColor: '#059669',
+  },
   addButtonText: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '700',
     color: '#FFFFFF',
   },
   removeButton: {
-    flex: 1,
-    height: 40,
+    width: 80,
+    height: 42,
     borderRadius: 10,
     backgroundColor: '#FEF2F2',
     justifyContent: 'center',
@@ -1105,81 +1263,62 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#E24B4A',
   },
-  uncertainCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 16,
+  vegWarningText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#BA7517',
+    backgroundColor: '#FFFBEB',
+    padding: 8,
+    borderRadius: 8,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  notInDbContainer: {
     marginBottom: 12,
   },
-  uncertainTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#1A1A1A',
+  notInDbText: {
+    fontSize: 13,
+    color: '#DC2626',
+    backgroundColor: '#FEF2F2',
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
     marginBottom: 12,
   },
-  uncertainOptions: {
-    gap: 8,
-  },
-  uncertainOption: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  suggestionsContainer: {
+    backgroundColor: '#F3F4F6',
     padding: 12,
     borderRadius: 10,
     borderWidth: 1,
     borderColor: '#E5E7EB',
   },
-  uncertainOptionText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#1A1A1A',
-  },
-  uncertainOptionPct: {
-    fontSize: 13,
-    color: '#6B7280',
-  },
-  uncertainManual: {
-    fontSize: 13,
-    color: '#1D9E75',
-    fontWeight: '600',
-    textAlign: 'center',
-    marginTop: 12,
-  },
-  unknownCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 12,
-  },
-  unknownTitle: {
-    fontSize: 15,
+  suggestionsTitle: {
+    fontSize: 12,
     fontWeight: '700',
-    color: '#1A1A1A',
-    marginBottom: 12,
+    color: '#4B5563',
+    marginBottom: 8,
   },
-  unknownSearch: {
-    height: 44,
-    borderRadius: 10,
-    borderWidth: 1.5,
-    borderColor: '#E5E7EB',
-    paddingHorizontal: 14,
-    fontSize: 15,
-    color: '#1A1A1A',
-    marginBottom: 12,
-  },
-  unknownSuggestion: {
-    fontSize: 13,
-    color: '#9CA3AF',
-    marginBottom: 12,
-  },
-  manualEntryButton: {
-    height: 40,
-    borderRadius: 10,
-    backgroundColor: '#F0FDF4',
-    justifyContent: 'center',
+  suggestionItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    marginBottom: 6,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
   },
-  manualEntryText: {
+  suggestionText: {
     fontSize: 13,
+    fontWeight: '600',
+    color: '#374151',
+  },
+  suggestionAddText: {
+    fontSize: 12,
     fontWeight: '700',
     color: '#1D9E75',
   },
@@ -1188,44 +1327,6 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     padding: 24,
     alignItems: 'center',
-  },
-  suggestionsContainer: {
-    width: '100%',
-    marginVertical: 16,
-    backgroundColor: '#F9FAFB',
-    borderRadius: 12,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-  suggestionsTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#4B5563',
-    marginBottom: 10,
-    textAlign: 'center',
-  },
-  suggestionItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-  suggestionText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#1F2937',
-  },
-  suggestionPct: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#1D9E75',
   },
   noDetectTitle: {
     fontSize: 18,
@@ -1237,6 +1338,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#6B7280',
     marginBottom: 20,
+    textAlign: 'center',
   },
   tryAgainButton: {
     height: 44,
@@ -1260,6 +1362,12 @@ const styles = StyleSheet.create({
     borderColor: '#1D9E75',
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  manualEntryText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1D9E75',
   },
   viewSummaryButton: {
     marginTop: 12,
@@ -1471,42 +1579,52 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#FFFFFF',
   },
-  candidatesContainer: {
-    marginTop: 4,
-    marginBottom: 12,
-    backgroundColor: '#F3F4F6',
-    padding: 10,
-    borderRadius: 10,
-  },
-  candidatesTitle: {
-    fontSize: 12,
+  processingTitle: {
+    fontSize: 20,
     fontWeight: '700',
-    color: '#4B5563',
-    marginBottom: 6,
+    color: '#FFFFFF',
+    marginTop: 20,
+    textAlign: 'center',
   },
-  candidatesScroll: {
-    flexDirection: 'row',
-    gap: 6,
-    paddingVertical: 2,
+  processingSubtitle: {
+    fontSize: 14,
+    color: 'rgba(255, 255, 255, 0.8)',
+    marginTop: 10,
+    textAlign: 'center',
+    lineHeight: 20,
   },
-  candidateChip: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
+  processingTimer: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#1D9E75',
+    marginTop: 15,
+    textAlign: 'center',
+  },
+  cancelBtn: {
+    marginTop: 25,
+    paddingVertical: 10,
+    paddingHorizontal: 24,
     borderRadius: 8,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
   },
-  candidateChipActive: {
-    backgroundColor: '#1D9E75',
-    borderColor: '#1D9E75',
-  },
-  candidateChipText: {
-    fontSize: 12,
-    color: '#4B5563',
+  cancelBtnText: {
+    fontSize: 14,
     fontWeight: '600',
-  },
-  candidateChipTextActive: {
     color: '#FFFFFF',
   },
+  demoBanner: {
+    backgroundColor: "#FEF3C7",
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "#F59E0B",
+  },
+  demoBannerText: {
+    fontSize: 12,
+    color: "#92400E",
+    textAlign: "center",
+    fontWeight: '600',
+  },
 });
+
