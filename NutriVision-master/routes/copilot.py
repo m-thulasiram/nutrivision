@@ -9,9 +9,12 @@ from typing import List
 
 from dependencies import require_user_id
 from database import get_db
+from logging_config import get_logger
 from services.copilot_service import stream_copilot_response
 from routes.users import _build_daily_progress
 import crud
+
+logger = get_logger("nutrivision.copilot")
 
 router = APIRouter(
     prefix="/api/copilot",
