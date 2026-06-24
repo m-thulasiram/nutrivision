@@ -121,16 +121,21 @@ async def copilot_chat(
     ]
 
     async def event_stream():
-        async for chunk in stream_copilot_response(
-            request.message,
-            user_context,
-            history
-        ):
-            # SSE format: data: <content>\n\n
-            yield f"data: {json.dumps({'text': chunk})}\n\n"
+        try:
+            async for chunk in stream_copilot_response(
+                request.message,
+                user_context,
+                history
+            ):
+                # SSE format: data: <content>\n\n
+                yield f"data: {json.dumps({'text': chunk})}\n\n"
+            # Signal stream end
+            yield f"data: {json.dumps({'done': True})}\n\n"
+        except Exception as e:
+            logger.warning(f"OpenAI copilot error: {e} — falling back to mock stream")
+            async for chunk in mock_copilot_stream(request.message, user_context):
+                yield chunk
 
-        # Signal stream end
-        yield f"data: {json.dumps({'done': True})}\n\n"
 
     return StreamingResponse(
         event_stream(),
