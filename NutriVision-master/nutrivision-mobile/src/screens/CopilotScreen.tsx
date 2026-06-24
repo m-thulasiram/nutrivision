@@ -356,53 +356,58 @@ export default function CopilotScreen() {
         }
         
         xhr.onreadystatechange = () => {
-          if (xhr.readyState === 3 || xhr.readyState === 4) {
-            const newText = xhr.responseText.slice(seenBytes);
-            seenBytes = xhr.responseText.length;
-            buffer += newText;
-            
-            let lineIndex = buffer.indexOf("\n");
-            while (lineIndex !== -1) {
-              const line = buffer.slice(0, lineIndex).trim();
-              buffer = buffer.slice(lineIndex + 1);
+          try {
+            if (xhr.readyState === 3 || xhr.readyState === 4) {
+              const responseText = xhr.responseText || "";
+              const newText = responseText.slice(seenBytes);
+              seenBytes = responseText.length;
+              buffer += newText;
               
-              if (line.startsWith("data: ")) {
-                try {
-                  const data = JSON.parse(line.slice(6));
-                  if (data.done) {
-                    // Done stream received
-                  } else if (data.text) {
-                    fullText += data.text;
-                    setMessages(prev => prev.map(m =>
-                      m.id === assistantMsgId
-                        ? { ...m, content: fullText }
-                        : m
-                    ));
+              let lineIndex = buffer.indexOf("\n");
+              while (lineIndex !== -1) {
+                const line = buffer.slice(0, lineIndex).trim();
+                buffer = buffer.slice(lineIndex + 1);
+                
+                if (line.startsWith("data: ")) {
+                  try {
+                    const data = JSON.parse(line.slice(6));
+                    if (data.done) {
+                      // Done stream received
+                    } else if (data.text) {
+                      fullText += data.text;
+                      setMessages(prev => prev.map(m =>
+                        m.id === assistantMsgId
+                          ? { ...m, content: fullText }
+                          : m
+                      ));
+                    }
+                  } catch (e) {
+                    // Ignore incomplete JSON lines
                   }
-                } catch (e) {
-                  // Ignore incomplete JSON lines
                 }
+                lineIndex = buffer.indexOf("\n");
               }
-              lineIndex = buffer.indexOf("\n");
             }
-          }
-          
-          if (xhr.readyState === 4) {
-            if (xhr.status >= 200 && xhr.status < 300) {
-              const parsed = parseResponse(fullText);
-              setMessages(prev => prev.map(m =>
-                m.id === assistantMsgId ? {
-                  ...m,
-                  content: parsed.text,
-                  foodCard: parsed.foodCard,
-                  logMeal: parsed.logMeal,
-                  isStreaming: false,
-                } : m
-              ));
-              resolve();
-            } else {
-              reject(new Error(`HTTP error ${xhr.status}`));
+            
+            if (xhr.readyState === 4) {
+              if (xhr.status >= 200 && xhr.status < 300) {
+                const parsed = parseResponse(fullText);
+                setMessages(prev => prev.map(m =>
+                  m.id === assistantMsgId ? {
+                    ...m,
+                    content: parsed.text,
+                    foodCard: parsed.foodCard,
+                    logMeal: parsed.logMeal,
+                    isStreaming: false,
+                  } : m
+                ));
+                resolve();
+              } else {
+                reject(new Error(`HTTP error ${xhr.status}`));
+              }
             }
+          } catch (err) {
+            reject(err);
           }
         };
         
@@ -416,6 +421,7 @@ export default function CopilotScreen() {
         }));
       });
       
+      setIsLoading(false);
     } catch (error: any) {
       setIsLoading(false);
       let errorMsg = "Could not connect to AI service.";
