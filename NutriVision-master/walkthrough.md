@@ -180,3 +180,17 @@ We identified and resolved a critical runtime crash in the AI Nutrition Copilot 
 2. **Robust Integration Testing**:
    - Created a new test file [test_copilot.py](file:///c:/Users/Lenovo/Downloads/NutriVision-master/NutriVision-master/tests/test_copilot.py) containing comprehensive tests for streaming mock fallbacks, exception-based mock fallbacks (mocking OpenAI error to trigger the exception handler and verify no NameError is thrown), and meal logging actions.
 
+---
+
+## 12. Local YOLO Scanner Integration in Mock Mode
+
+We resolved a major usability issue where scanning foods in mock/demo mode (when no `OPENAI_API_KEY` is configured) would always return hardcoded regional dishes (such as Idli/Sambar for Tamil Nadu), completely ignoring the scanned image (e.g., showing "Idli" for a "Fruit Salad" photo).
+1. **Integrated Local YOLO Model**:
+   - Refactored `analyze_food_image_mock` in [food_vision.py](file:///c:/Users/Lenovo/Downloads/NutriVision-master/NutriVision-master/services/food_vision.py) to actually run the local fine-tuned YOLO model (with `imgsz=256` as required by the ONNX weights) on the uploaded image.
+   - If the YOLO model detects any of its 20 trained classes (including *Fruit Salad*, *Chicken Curry*, *Masala Dosa*, *Idli*, etc.) with a confidence of `0.25` or higher, the scanner resolves the detection against the 504-food database and returns the actual scanned food.
+   - If no YOLO classes are detected with sufficient confidence, the scanner gracefully falls back to the regional state-based mock menu.
+2. **True Integration Testing**:
+   - This change brings the local YOLO model to life for local offline development.
+   - The test suite in [test_yolo.py](file:///c:/Users/Lenovo/Downloads/NutriVision-master/NutriVision-master/tests/test_yolo.py) now actually exercises the YOLO detection pipeline during testing instead of relying on hardcoded food fallbacks.
+
+

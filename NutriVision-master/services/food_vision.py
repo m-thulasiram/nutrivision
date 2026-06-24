@@ -188,164 +188,186 @@ async def analyze_food_image_mock(
     diet_type: str = "vegetarian"
 ) -> dict:
     """
-    Smart mock that returns real food data from the database based on user's region.
-    Used when GPT-4o is unavailable. Handles errors robustly if database files are not found.
+    Smart mock that runs the local YOLO model (with imgsz=256) on the image.
+    If YOLO detects any of the 20 classes with confidence >= 0.25, it resolves them against the database.
+    If no YOLO detections are found, it falls back to the regional state-based mock.
+    Used when GPT-4o is unavailable or no valid key is present.
     """
+    sample_foods = []
+    is_yolo_detection = False
+    
     try:
-        # Determine database path
-        db_path = None
-        if os.path.exists("expanded_food_database.csv"):
-            db_path = "expanded_food_database.csv"
-        elif os.path.exists("indian_diet.csv"):
-            db_path = "indian_diet.csv"
-            
-        if not db_path:
-            raise FileNotFoundError("No food database CSV file found.")
-            
-        db = pd.read_csv(db_path)
-        db.columns = db.columns.str.strip()
+        from models import get_models
+        from PIL import Image
+        import io
         
-        # Filter by diet type
-        if diet_type == "vegetarian":
-            db = db[db["VegNovVeg"].astype(str).str.strip() == "0"]
+        # Load image from bytes
+        img = Image.open(io.BytesIO(image_bytes))
         
-        # Pick 2 regional foods as demo
-        sample_foods = []
+        # Get models and predict
+        m = get_models()
+        # Ensure we pass imgsz=256 as required by the ONNX model
+        results = m.yolo_model(img, imgsz=256)
         
-        # State to common foods mapping
-        STATE_FOODS = {
-            "Tamil Nadu": ["Idli", "Sambar", "Dosa"],
-            "Kerala": ["Puttu", "Appam", "Avial"],
-            "Punjab": ["Chole", "Paneer Tikka", "Dal Makhani"],
-            "Maharashtra": ["Vada Pav", "Poha", "Misal Pav"],
-            "Gujarat": ["Dhokla", "Thepla", "Khichdi"],
-            "West Bengal": ["Dal Fry", "Rice", "Begun Bhaja"],
-            "Rajasthan": ["Dal Baati", "Gatte", "Bajre ki Roti"],
-            "Karnataka": ["Bisi Bele Bath", "Ragi Mudde", "Idli"],
-        }
-        
-        regional_foods = STATE_FOODS.get(user_state, ["Idli", "Dal Fry", "Rice"])
-        
-        for food_name in regional_foods[:2]:
-            row = db[db["Food_items"].str.strip().str.lower() == food_name.lower()]
-            
-            if row.empty:
-                # Fuzzy match
-                row = db[db["Food_items"].str.lower().str.contains(food_name.lower()[:4], na=False)]
-            
-            if not row.empty:
-                r = row.iloc[0]
-                weight = 100.0
-                factor = weight / 100.0
-                
-                sample_foods.append({
-                    "status": "confident",
-                    "food_name": str(r["Food_items"]).strip(),
-                    "detected_as": food_name,
-                    "confidence": 0.85,
-                    "count": 1,
-                    "description": f"1 serving ({int(weight)}g) — Demo mode",
-                    "estimated_weight_g": weight,
-                    "is_mock": True,
-                    "nutrition": {
-                        "food_name": str(r["Food_items"]).strip(),
-                        "weight_g": weight,
-                        "calories": round(float(r.get("Calories", 0)) * factor, 1),
-                        "protein_g": round(float(r.get("Proteins", 0)) * factor, 1),
-                        "carbs_g": round(float(r.get("Carbohydrates", 0)) * factor, 1),
-                        "fats_g": round(float(r.get("Fats", 0)) * factor, 1),
-                        "fibre_g": round(float(r.get("Fibre", 0)) * factor, 1),
-                        "sugar_g": round(float(r.get("Sugars", 0)) * factor, 1),
-                        "iron_mg": round(float(r.get("Iron", 0)) * factor, 2),
-                        "calcium_mg": round(float(r.get("Calcium", 0)) * factor, 1),
-                        "sodium_mg": round(float(r.get("Sodium", 0)) * factor, 1),
-                        "potassium_mg": round(float(r.get("Potassium", 0)) * factor, 1),
-                        "vitamin_d_iu": round(float(r.get("VitaminD", 0)) * factor, 1),
-                        "is_veg": str(r.get("VegNovVeg", "0")).strip() == "0",
-                        "per_100g": {
-                            "calories": float(r.get("Calories", 0)),
-                            "protein_g": float(r.get("Proteins", 0)),
-                            "carbs_g": float(r.get("Carbohydrates", 0)),
-                            "fats_g": float(r.get("Fats", 0)),
-                            "fibre_g": float(r.get("Fibre", 0)),
-                            "iron_mg": float(r.get("Iron", 0)),
-                            "calcium_mg": float(r.get("Calcium", 0)),
-                        }
-                    },
-                    "portion_options": {
-                        "small": {"weight_g": 70, "label": "Small"},
-                        "medium": {"weight_g": 100, "label": "Medium"},
-                        "large": {"weight_g": 140, "label": "Large"}
-                    }
-                })
-                
-        if not sample_foods:
-            raise ValueError("No foods loaded from CSV.")
-            
-        return {
-            "success": True,
-            "model": "demo_mode",
-            "is_mock": True,
-            "mock_notice": "Running in demo mode. Add OPENAI_API_KEY to .env for real food detection.",
-            "meal_context": f"Demo — {user_state} regional foods",
-            "detection_quality": "demo",
-            "detected_foods": sample_foods,
-            "total_detected": len(sample_foods)
-        }
-        
+        if results and len(results) > 0:
+            result = results[0]
+            if hasattr(result, "boxes") and result.boxes:
+                for box in result.boxes:
+                    cls_id = int(box.cls[0].item())
+                    conf = float(box.conf[0].item())
+                    if conf >= 0.25:
+                        class_name = m.yolo_model.names.get(cls_id)
+                        if class_name:
+                            # Map class name (e.g., 'Fruit_Salad') to db name (e.g., 'Fruit Salad')
+                            db_name = class_name.replace("_", " ")
+                            db_row = find_food_in_db(db_name)
+                            
+                            if db_row:
+                                weight = 100.0
+                                is_yolo_detection = True
+                                
+                                sample_foods.append({
+                                    "status": "confident",
+                                    "food_name": db_row["Food_items"],
+                                    "detected_as": db_name,
+                                    "confidence": conf,
+                                    "count": 1,
+                                    "description": f"1 serving ({int(weight)}g) — YOLO Local Detection",
+                                    "estimated_weight_g": weight,
+                                    "is_mock": False,
+                                    "nutrition": scale_nutrition(db_row, weight),
+                                    "portion_options": {
+                                        "small": {"weight_g": 70, "label": "Small"},
+                                        "medium": {"weight_g": 100, "label": "Medium"},
+                                        "large": {"weight_g": 140, "label": "Large"}
+                                    }
+                                })
     except Exception as e:
-        print(f"Mock scanner DB load failed: {e}. Returning hardcoded fallback.")
-        # Hardcoded high-quality fallback when DB is missing/corrupted
-        sample_foods = [{
-            "status": "confident",
-            "food_name": "Idli",
-            "detected_as": "Idli",
-            "confidence": 0.85,
-            "count": 1,
-            "description": "1 serving (100g) — Demo mode (Fallback)",
-            "estimated_weight_g": 100.0,
-            "is_mock": True,
-            "nutrition": {
+        print(f"Local YOLO scanning failed or model not loaded: {e}")
+        
+    # Fallback to hardcoded state-based regional mock if no YOLO detections were found
+    if not sample_foods:
+        try:
+            # Determine database path
+            db_path = None
+            if os.path.exists("expanded_food_database.csv"):
+                db_path = "expanded_food_database.csv"
+            elif os.path.exists("indian_diet.csv"):
+                db_path = "indian_diet.csv"
+                
+            if not db_path:
+                raise FileNotFoundError("No food database CSV file found.")
+                
+            db = pd.read_csv(db_path)
+            db.columns = db.columns.str.strip()
+            
+            # Filter by diet type
+            if diet_type == "vegetarian":
+                db = db[db["VegNovVeg"].astype(str).str.strip() == "0"]
+            
+            # State to common foods mapping
+            STATE_FOODS = {
+                "Tamil Nadu": ["Idli", "Sambar", "Dosa"],
+                "Kerala": ["Puttu", "Appam", "Avial"],
+                "Punjab": ["Chole", "Paneer Tikka", "Dal Makhani"],
+                "Maharashtra": ["Vada Pav", "Poha", "Misal Pav"],
+                "Gujarat": ["Dhokla", "Thepla", "Khichdi"],
+                "West Bengal": ["Dal Fry", "Rice", "Begun Bhaja"],
+                "Rajasthan": ["Dal Baati", "Gatte", "Bajre ki Roti"],
+                "Karnataka": ["Bisi Bele Bath", "Ragi Mudde", "Idli"],
+            }
+            
+            regional_foods = STATE_FOODS.get(user_state, ["Idli", "Dal Fry", "Rice"])
+            
+            for food_name in regional_foods[:2]:
+                row = db[db["Food_items"].str.strip().str.lower() == food_name.lower()]
+                
+                if row.empty:
+                    # Fuzzy match
+                    row = db[db["Food_items"].str.lower().str.contains(food_name.lower()[:4], na=False)]
+                
+                if not row.empty:
+                    r = row.iloc[0]
+                    weight = 100.0
+                    
+                    sample_foods.append({
+                        "status": "confident",
+                        "food_name": str(r["Food_items"]).strip(),
+                        "detected_as": food_name,
+                        "confidence": 0.85,
+                        "count": 1,
+                        "description": f"1 serving ({int(weight)}g) — Demo mode",
+                        "estimated_weight_g": weight,
+                        "is_mock": True,
+                        "nutrition": scale_nutrition(normalize_db_row(r.to_dict()), weight),
+                        "portion_options": {
+                            "small": {"weight_g": 70, "label": "Small"},
+                            "medium": {"weight_g": 100, "label": "Medium"},
+                            "large": {"weight_g": 140, "label": "Large"}
+                        }
+                    })
+        except Exception as e:
+            print(f"Mock scanner DB load failed: {e}. Returning hardcoded fallback.")
+            # Hardcoded high-quality fallback when DB is missing/corrupted
+            sample_foods = [{
+                "status": "confident",
                 "food_name": "Idli",
-                "weight_g": 100.0,
-                "calories": 156.0,
-                "protein_g": 5.0,
-                "carbs_g": 30.2,
-                "fats_g": 1.7,
-                "fibre_g": 2.1,
-                "sugar_g": 0.0,
-                "iron_mg": 0.7,
-                "calcium_mg": 4.0,
-                "sodium_mg": 10.0,
-                "potassium_mg": 50.0,
-                "vitamin_d_iu": 0.0,
-                "is_veg": True,
-                "per_100g": {
+                "detected_as": "Idli",
+                "confidence": 0.85,
+                "count": 1,
+                "description": "1 serving (100g) — Demo mode (Fallback)",
+                "estimated_weight_g": 100.0,
+                "is_mock": True,
+                "nutrition": {
+                    "food_name": "Idli",
+                    "weight_g": 100.0,
                     "calories": 156.0,
                     "protein_g": 5.0,
                     "carbs_g": 30.2,
                     "fats_g": 1.7,
                     "fibre_g": 2.1,
+                    "sugar_g": 0.0,
                     "iron_mg": 0.7,
                     "calcium_mg": 4.0,
+                    "sodium_mg": 10.0,
+                    "potassium_mg": 50.0,
+                    "vitamin_d_iu": 0.0,
+                    "is_veg": True,
+                    "per_100g": {
+                        "calories": 156.0,
+                        "protein_g": 5.0,
+                        "carbs_g": 30.2,
+                        "fats_g": 1.7,
+                        "fibre_g": 2.1,
+                        "iron_mg": 0.7,
+                        "calcium_mg": 4.0,
+                    }
+                },
+                "portion_options": {
+                    "small": {"weight_g": 70, "label": "Small"},
+                    "medium": {"weight_g": 100, "label": "Medium"},
+                    "large": {"weight_g": 140, "label": "Large"}
                 }
-            },
-            "portion_options": {
-                "small": {"weight_g": 70, "label": "Small"},
-                "medium": {"weight_g": 100, "label": "Medium"},
-                "large": {"weight_g": 140, "label": "Large"}
-            }
-        }]
-        return {
-            "success": True,
-            "model": "demo_mode",
-            "is_mock": True,
-            "mock_notice": "Running in demo mode. Add OPENAI_API_KEY to .env for real food detection.",
-            "meal_context": f"Demo — {user_state} regional foods",
-            "detection_quality": "demo",
-            "detected_foods": sample_foods,
-            "total_detected": len(sample_foods)
-        }
+            }]
+            
+    # Prepare mock notice or detection info
+    if is_yolo_detection:
+        notice = "Local YOLO detection successful. Running offline."
+        model_name = "yolo_local"
+    else:
+        notice = "Running in demo mode. Add OPENAI_API_KEY to .env for real food detection."
+        model_name = "demo_mode"
+        
+    return {
+        "success": True,
+        "model": model_name,
+        "is_mock": not is_yolo_detection,
+        "mock_notice": notice,
+        "meal_context": "Local food scanning" if is_yolo_detection else f"Demo — {user_state} regional foods",
+        "detection_quality": "local" if is_yolo_detection else "demo",
+        "detected_foods": sample_foods,
+        "total_detected": len(sample_foods)
+    }
 
 async def _call_gpt4o_vision(
     image_bytes: bytes,
