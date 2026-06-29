@@ -81,7 +81,7 @@ Scan the QR code with Expo Go on your phone, or press `a` for Android emulator /
 ### 4. Setup web frontend (optional)
 
 ```bash
-cd nutrivision-ui
+cd frontend
 npm install
 npm run dev
 ```
@@ -163,7 +163,7 @@ NutriVision-master/
 │       ├── navigation/         # React Navigation setup
 │       └── utils/              # API + auth utilities
 │
-├── nutrivision-ui/             # React + Vite web frontend
+├── frontend/                   # React + Vite web frontend
 │
 ├── tests/                      # Pytest test suite (124 tests)
 │

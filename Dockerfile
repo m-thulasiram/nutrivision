@@ -1,9 +1,9 @@
 # ---- Frontend build stage ----
 FROM node:20-slim AS frontend-builder
 WORKDIR /build
-COPY NutriVision-master/nutrivision-ui/package*.json ./
+COPY NutriVision-master/frontend/package*.json ./
 RUN npm ci
-COPY NutriVision-master/nutrivision-ui/ ./
+COPY NutriVision-master/frontend/ ./
 RUN npm run build
 
 # ---- Build stage ----
@@ -45,7 +45,7 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 COPY NutriVision-master/ .
 
 # Copy built frontend assets
-COPY --from=frontend-builder /build/dist /app/nutrivision-ui/dist
+COPY --from=frontend-builder /build/dist /app/frontend/dist
 
 RUN chown -R appuser:appgroup /app && \
     mkdir -p /data && chown appuser:appgroup /data

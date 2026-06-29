@@ -157,7 +157,7 @@ app.include_router(copilot_router)
 app.include_router(scanner_router)
 
 # Serve frontend SPA (must be last to not shadow API routes)
-FRONTEND_DIR = Path(__file__).parent / "nutrivision-ui" / "dist"
+FRONTEND_DIR = Path(__file__).parent / "frontend" / "dist"
 if FRONTEND_DIR.exists():
     from fastapi.responses import FileResponse
 

@@ -10,7 +10,7 @@ ignore = ["E402"]
 "generate_audit.py" = ["F541", "F401"]
 "locustfile.py" = ["F541", "F401"]
 "benchmark_recommendation.py" = ["F841"]
-"nutrivision-ui/*" = ["W291", "W293"]
+"frontend/*" = ["W291", "W293"]
 "perfect_solver.py" = ["W291", "W293", "W292"]
 
 

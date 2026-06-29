@@ -123,12 +123,10 @@ async def analyze_meal(
         
         if not result.get("success", False):
             logger.error("Vision analysis failed", extra={"user_id": current_user_id, "error": result.get("error")})
-            return {
-                "status": "error",
-                "message": "Could not analyze image. Please try again with better lighting.",
-                "fallback": "manual_entry",
-                "detected_foods": []
-            }
+            raise HTTPException(
+                status_code=502,
+                detail=result.get("error") or "Could not analyze image. Please try again with better lighting."
+            )
             
         # Check veg guardrail & add warning if necessary
         if diet_type == "vegetarian":
@@ -270,29 +268,10 @@ async def analyze_meal(
         logger.error(f"Analyze endpoint error: {e}")
         import traceback
         traceback.print_exc()
-        
-        return {
-            "status": "error",
-            "scan_id": None,
-            "model_used": "error",
-            "is_demo_mode": False,
-            "demo_notice": "",
-            "meal_context": "",
-            "detection_quality": "failed",
-            "detected_foods": [],
-            "meal_totals": {
-                "calories": 0, "protein_g": 0,
-                "carbs_g": 0, "fats_g": 0
-            },
-            "meal_time": meal_time,
-            "requires_confirmation": False,
-            "total_detected": 0,
-            "error_message": (
-                "Analysis failed. Please try again "
-                "with better lighting, or use "
-                "'Type manually' to log your food."
-            )
-        }
+        raise HTTPException(
+            status_code=500,
+            detail=f"Analysis failed: {str(e)}"
+        )
 
 @router.post("/analyze-meal-b64")
 @_rate_limit("30/minute")
@@ -345,12 +324,10 @@ async def analyze_meal_b64(
         
         if not result.get("success", False):
             logger.error("Vision analysis failed for base64", extra={"user_id": current_user_id, "error": result.get("error")})
-            return {
-                "status": "error",
-                "message": "Could not analyze image. Please try again with better lighting.",
-                "fallback": "manual_entry",
-                "detected_foods": []
-            }
+            raise HTTPException(
+                status_code=502,
+                detail=result.get("error") or "Could not analyze image. Please try again with better lighting."
+            )
             
         # Check veg guardrail & add warning if necessary
         if diet_type == "vegetarian":
@@ -492,29 +469,10 @@ async def analyze_meal_b64(
         logger.error(f"Analyze endpoint error: {e}")
         import traceback
         traceback.print_exc()
-        
-        return {
-            "status": "error",
-            "scan_id": None,
-            "model_used": "error",
-            "is_demo_mode": False,
-            "demo_notice": "",
-            "meal_context": "",
-            "detection_quality": "failed",
-            "detected_foods": [],
-            "meal_totals": {
-                "calories": 0, "protein_g": 0,
-                "carbs_g": 0, "fats_g": 0
-            },
-            "meal_time": payload.meal_time,
-            "requires_confirmation": False,
-            "total_detected": 0,
-            "error_message": (
-                "Analysis failed. Please try again "
-                "with better lighting, or use "
-                "'Type manually' to log your food."
-            )
-        }
+        raise HTTPException(
+            status_code=500,
+            detail=f"Analysis failed: {str(e)}"
+        )
 
 @router.post("/confirm-meal")
 async def confirm_meal(
